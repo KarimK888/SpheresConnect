@@ -1,0 +1,65 @@
+"use client";
+
+import { useCallback, useEffect, useMemo, useState } from "react";
+import type { MatchSuggestion } from "../lib/types";
+import { getBackend } from "../lib/backend";
+
+export const useMatch = (userId: string | null | undefined) => {
+  const [matches, setMatches] = useState<MatchSuggestion[]>([]);
+  const [loading, setLoading] = useState(Boolean(userId));
+  const [error, setError] = useState<string | null>(null);
+  const [history, setHistory] = useState<Record<string, "connected" | "skipped">>({});
+
+  const fetchMatches = useCallback(async () => {
+    if (!userId) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const backend = getBackend();
+      const result = await backend.matches.suggest({ userId });
+      setMatches(result);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load matches");
+    } finally {
+      setLoading(false);
+    }
+  }, [userId]);
+
+  useEffect(() => {
+    if (!userId) {
+      setMatches([]);
+      setHistory({});
+      setLoading(false);
+    }
+  }, [userId]);
+
+  useEffect(() => {
+    void fetchMatches();
+  }, [fetchMatches]);
+
+  const current = useMemo(() => matches.find((candidate) => !history[candidate.userId]), [matches, history]);
+
+  const onConnect = useCallback(
+    (candidateId: string) => {
+      setHistory((state) => ({ ...state, [candidateId]: "connected" }));
+    },
+    []
+  );
+
+  const onSkip = useCallback(
+    (candidateId: string) => {
+      setHistory((state) => ({ ...state, [candidateId]: "skipped" }));
+    },
+    []
+  );
+
+  return {
+    matches,
+    loading,
+    error,
+    current,
+    refresh: fetchMatches,
+    onConnect,
+    onSkip
+  };
+};
