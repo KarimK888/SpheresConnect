@@ -1,3 +1,51 @@
+export interface UserSocialLinks {
+  website?: string;
+  instagram?: string;
+  twitter?: string;
+  linkedin?: string;
+  behance?: string;
+  dribbble?: string;
+  youtube?: string;
+  tiktok?: string;
+  github?: string;
+}
+
+export interface UserProfileMedia {
+  mediaId: string;
+  type: "image" | "video" | "document";
+  title: string;
+  description?: string;
+  url: string;
+  thumbnailUrl?: string;
+  tags?: string[];
+}
+
+export interface UserProfileProject {
+  projectId: string;
+  title: string;
+  summary: string;
+  link?: string;
+  status?: "draft" | "live";
+  mediaIds?: string[];
+  tags?: string[];
+  year?: number;
+}
+
+export interface UserProfile {
+  headline?: string;
+  locationName?: string;
+  availability?: "open" | "limited" | "booked";
+  timezone?: string;
+  coverImageUrl?: string;
+  avatarType?: "photo" | "avatar" | "initials";
+  socials?: UserSocialLinks;
+  media?: UserProfileMedia[];
+  projects?: UserProfileProject[];
+  resumeUrl?: string;
+  featuredVideoUrl?: string;
+  preferredCollabModes?: ("remote" | "in-person" | "hybrid")[];
+}
+
 export interface User {
   userId: string;
   email: string;
@@ -10,6 +58,7 @@ export interface User {
   language: "en" | "fr" | "es";
   location?: { lat: number; lng: number };
   joinedAt: number;
+  profile?: UserProfile;
 }
 
 export interface MatchSuggestion extends User {

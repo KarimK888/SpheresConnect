@@ -116,5 +116,5 @@ export default function ProfilePage() {
     return null;
   }
 
-  return <ProfileClient user={state.user} listings={state.listings} />;
+  return <ProfileClient user={state.user} listings={state.listings} viewerId={sessionUser?.userId} />;
 }

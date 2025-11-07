@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { getBackend } from "@/lib/backend";
@@ -29,6 +29,7 @@ export default function CurrentProfilePage() {
   const router = useRouter();
   const { logout } = useAuth();
   const sessionUser = useSessionState((state) => state.user);
+  const setSessionUser = useSessionState((state) => state.setUser);
   const [state, setState] = useState<ProfileState>({ ...initialState });
 
   const userId = useMemo(() => sessionUser?.userId ?? null, [sessionUser]);
@@ -77,6 +78,14 @@ export default function CurrentProfilePage() {
       cancelled = true;
     };
   }, [sessionUser, userId]);
+
+  const handleUserUpdated = useCallback(
+    (next: User) => {
+      setState((prev) => ({ ...prev, user: next }));
+      setSessionUser(next);
+    },
+    [setSessionUser]
+  );
 
   if (state.loading) {
     return (
@@ -134,7 +143,7 @@ export default function CurrentProfilePage() {
           {t("profile_sign_out")}
         </Button>
       </div>
-      <ProfileClient user={state.user} listings={state.listings} />
+      <ProfileClient user={state.user} listings={state.listings} viewerId={userId} onUserUpdated={handleUserUpdated} />
     </div>
   );
 }

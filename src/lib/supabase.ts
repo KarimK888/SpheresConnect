@@ -1,8 +1,27 @@
 import { createClient, type SupabaseClient, type RealtimeChannel } from "@supabase/supabase-js";
 import type { BackendAdapter, AuthSession, CreateEventInput } from "./backend";
 import type { Database, ChatAttachmentPayload } from "./supabase-database";
-import type { Chat, Hub, ChatMessage, MatchSuggestion, MessageEvent, MessageReaction, User, Artwork, Order, Event } from "./types";
-import { sampleHubs, sampleArtworks, sampleOrders, sampleEvents, sampleUsers } from "./sample-data";
+import type {
+  Chat,
+  Hub,
+  ChatMessage,
+  MatchSuggestion,
+  MessageEvent,
+  MessageReaction,
+  User,
+  Artwork,
+  Order,
+  Event,
+  Checkin
+} from "./types";
+import {
+  sampleHubs,
+  sampleArtworks,
+  sampleOrders,
+  sampleEvents,
+  sampleUsers,
+  sampleCheckins
+} from "./sample-data";
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
@@ -10,29 +29,14 @@ const SUPABASE_SERVICE_ROLE_KEY =
   process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.SUPABASE_SERVICE_ROLE;
 
 if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
-  // eslint-disable-next-line no-console
   console.warn(
     "[supabase] Missing NEXT_PUBLIC_SUPABASE_URL or NEXT_PUBLIC_SUPABASE_ANON_KEY. Falling back to in-memory adapter."
   );
 }
 
-const getNodeRandomUUID = (): (() => string) | null => {
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { randomUUID } = require("crypto") as typeof import("crypto");
-    return typeof randomUUID === "function" ? randomUUID : null;
-  } catch {
-    return null;
-  }
-};
-
 const generateId = () => {
   if (typeof globalThis !== "undefined" && globalThis.crypto?.randomUUID) {
     return globalThis.crypto.randomUUID();
-  }
-  const nodeUUID = getNodeRandomUUID();
-  if (nodeUUID) {
-    return nodeUUID();
   }
   return `local_${Math.random().toString(36).slice(2)}${Date.now().toString(36)}`;
 };
@@ -62,6 +66,47 @@ const listeners = new Set<(event: MessageEvent) => void>();
 let realtimeChannel: RealtimeChannel | null = null;
 let currentSession: AuthSession | null = null;
 let fallbackEvents = [...sampleEvents];
+let fallbackCheckins = [...sampleCheckins];
+
+const CHECKIN_TTL_MS = 1000 * 60 * 60 * 4;
+
+const cleanupFallbackCheckins = () => {
+  const now = Date.now();
+  fallbackCheckins = fallbackCheckins.filter((checkin) => checkin.expiresAt > now);
+};
+
+const createFallbackCheckin = (input: {
+  userId: string;
+  hubId?: string;
+  location: { lat: number; lng: number };
+  status: "online" | "offline";
+}): Checkin => {
+  const now = Date.now();
+  const checkin: Checkin = {
+    checkinId: generateId(),
+    userId: input.userId,
+    hubId: input.hubId,
+    location: input.location,
+    status: input.status,
+    createdAt: now,
+    expiresAt: now + CHECKIN_TTL_MS
+  };
+  cleanupFallbackCheckins();
+  fallbackCheckins = [...fallbackCheckins.filter((item) => item.userId !== input.userId), checkin];
+  return checkin;
+};
+
+const sortByNearIfNeeded = <T extends { location: { lat: number; lng: number } }>(
+  list: T[],
+  near?: { lat: number; lng: number }
+) => {
+  if (!near) return list;
+  return [...list].sort((a, b) => {
+    const distA = distanceKm(near, a.location) ?? Number.POSITIVE_INFINITY;
+    const distB = distanceKm(near, b.location) ?? Number.POSITIVE_INFINITY;
+    return distA - distB;
+  });
+};
 
 const mapUserRow = (row: Database["public"]["Tables"]["users"]["Row"]): User => ({
   userId: row.user_id,
@@ -74,7 +119,8 @@ const mapUserRow = (row: Database["public"]["Tables"]["users"]["Row"]): User => 
   isVerified: Boolean(row.is_verified),
   language: (row.language ?? "en") as User["language"],
   location: row.location ?? undefined,
-  joinedAt: new Date(row.joined_at).getTime()
+  joinedAt: new Date(row.joined_at).getTime(),
+  profile: (row.profile ?? undefined) as User["profile"]
 });
 
 const mapMessageRow = (row: Database["public"]["Tables"]["messages"]["Row"]): ChatMessage => ({
@@ -109,6 +155,16 @@ const mapHubRow = (row: Database["public"]["Tables"]["hubs"]["Row"]): Hub => ({
   name: row.name,
   location: row.location,
   activeUsers: row.active_users ?? []
+});
+
+const mapCheckinRow = (row: Database["public"]["Tables"]["checkins"]["Row"]): Checkin => ({
+  checkinId: row.checkin_id,
+  userId: row.user_id,
+  hubId: row.hub_id ?? undefined,
+  location: row.location ?? { lat: 0, lng: 0 },
+  status: row.status ?? "online",
+  expiresAt: new Date(row.expires_at).getTime(),
+  createdAt: new Date(row.created_at).getTime()
 });
 
 const mapArtworkRow = (row: Database["public"]["Tables"]["artworks"]["Row"]): Artwork => ({
@@ -432,7 +488,8 @@ export const createSupabaseBackend = (): BackendAdapter => {
           connections: input.connections,
           is_verified: input.isVerified,
           language: input.language,
-          location: input.location ?? null
+          location: input.location ?? null,
+          profile: (input.profile ?? null) as Database["public"]["Tables"]["users"]["Update"]["profile"]
         };
         const { data, error } = await admin
           .from("users")
@@ -474,11 +531,63 @@ export const createSupabaseBackend = (): BackendAdapter => {
       }
     },
     checkins: {
-      create: async () => {
-        throw new Error("Presence check-ins not yet implemented for Supabase backend.");
+      create: async ({ userId, hubId, location, status }) => {
+        const expiresAt = Date.now() + CHECKIN_TTL_MS;
+        if (!clients) {
+          return createFallbackCheckin({ userId, hubId, location, status });
+        }
+        try {
+          const { admin } = clients;
+          await admin.from("checkins").delete().eq("user_id", userId);
+          const { data, error } = await admin
+            .from("checkins")
+            .insert({
+              checkin_id: generateId(),
+              user_id: userId,
+              hub_id: hubId ?? null,
+              location,
+              status,
+              expires_at: new Date(expiresAt).toISOString(),
+              created_at: new Date().toISOString()
+            })
+            .select("*")
+            .single();
+          if (error) throw error;
+          const mapped = mapCheckinRow(data);
+          fallbackCheckins = [
+            ...fallbackCheckins.filter((checkin) => checkin.userId !== userId),
+            mapped
+          ];
+          return mapped;
+        } catch (error) {
+          console.warn("[supabase] checkins.create fallback:", error instanceof Error ? error.message : error);
+          return createFallbackCheckin({ userId, hubId, location, status });
+        }
       },
-      listActive: async () => {
-        return [];
+      listActive: async ({ near }: { near?: { lat: number; lng: number } } = {}) => {
+        if (!clients) {
+          cleanupFallbackCheckins();
+          return sortByNearIfNeeded([...fallbackCheckins], near);
+        }
+        try {
+          const { admin } = clients;
+          const { data, error } = await admin
+            .from("checkins")
+            .select("*")
+            .gt("expires_at", new Date().toISOString());
+          if (error) throw error;
+          const mapped = (data ?? []).map(mapCheckinRow);
+          cleanupFallbackCheckins();
+          fallbackCheckins = [
+            ...fallbackCheckins.filter((fallback) => !mapped.some((item) => item.userId === fallback.userId)),
+            ...mapped
+          ];
+          return sortByNearIfNeeded(mapped, near);
+        } catch (error) {
+          console.warn("[supabase] checkins.listActive fallback:", error instanceof Error ? error.message : error);
+          cleanupFallbackCheckins();
+          return sortByNearIfNeeded([...fallbackCheckins], near);
+        }
       }
     },
     matches: {
@@ -963,8 +1072,12 @@ export const createSupabaseBackend = (): BackendAdapter => {
       }
     },
     uploads: {
-      createSignedUrl: async () => {
-        throw new Error("Uploads not yet implemented for Supabase backend.");
+      createSignedUrl: async ({ extension }) => {
+        const assetId = generateId();
+        return {
+          uploadUrl: `https://uploads.spheraconnect.dev/${assetId}.${extension}`,
+          fileUrl: `https://cdn.spheraconnect.dev/${assetId}.${extension}`
+        };
       }
     }
   };

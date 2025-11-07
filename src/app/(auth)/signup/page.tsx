@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -25,6 +26,7 @@ export default function SignupPage() {
   const backend = getBackend();
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
+  const router = useRouter();
 
   const schema = useMemo(
     () =>
@@ -50,6 +52,7 @@ export default function SignupPage() {
       });
       setSuccess(true);
       setError(null);
+      router.push("/login");
     } catch (err) {
       setSuccess(false);
       setError(err instanceof Error ? err.message : t("auth_signup_error"));

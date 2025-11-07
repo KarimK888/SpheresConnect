@@ -1,5 +1,7 @@
 "use client";
 
+import Image from "next/image";
+import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { motion, useAnimation, useMotionValue, useTransform } from "framer-motion";
 import { Heart, RefreshCcw, Sparkles, X } from "lucide-react";
@@ -13,6 +15,28 @@ import type { MatchSuggestion } from "@/lib/types";
 
 const DECISION_DISTANCE = 160;
 const DECISION_VELOCITY = 800;
+
+const getInitials = (name: string) => name.trim().slice(0, 2).toUpperCase();
+
+const AvatarCircle = ({ candidate, size = 64 }: { candidate: MatchSuggestion; size?: number }) => (
+  <div
+    className="flex items-center justify-center overflow-hidden rounded-full border border-border bg-background/70"
+    style={{ width: size, height: size }}
+  >
+    {candidate.profilePictureUrl ? (
+      <Image
+        src={candidate.profilePictureUrl}
+        alt={candidate.displayName}
+        width={size ?? 64}
+        height={size ?? 64}
+        className="h-full w-full object-cover"
+        unoptimized
+      />
+    ) : (
+      <span className="text-lg font-semibold uppercase">{getInitials(candidate.displayName)}</span>
+    )}
+  </div>
+);
 
 export default function MatcherPage() {
   const { t } = useI18n();
@@ -95,7 +119,10 @@ export default function MatcherPage() {
     <Card className="pointer-events-none mt-6 w-full max-w-md scale-95 bg-card/70 shadow-lg backdrop-blur">
       <div className="space-y-3 p-6">
         <div className="flex items-start justify-between gap-3">
-          <p className="text-lg font-semibold text-white">{candidate.displayName}</p>
+          <div className="flex items-center gap-3">
+            <AvatarCircle candidate={candidate} size={56} />
+            <p className="text-lg font-semibold text-white">{candidate.displayName}</p>
+          </div>
           {renderCandidateBadges(candidate)}
         </div>
         {candidate.bio && <p className="text-sm text-muted-foreground">{candidate.bio}</p>}
@@ -157,14 +184,22 @@ export default function MatcherPage() {
               <Card className="w-full max-w-md overflow-hidden bg-card/90 shadow-2xl">
                 <div className="space-y-6 p-6">
                   <div className="flex items-start justify-between gap-3">
-                    <div>
-                      <h2 className="text-2xl font-semibold text-white">{topCandidate.displayName}</h2>
-                      {topCandidate.bio && (
-                        <p className="mt-2 text-sm text-muted-foreground">{topCandidate.bio}</p>
-                      )}
+                    <div className="flex items-start gap-3">
+                      <Link href={`/profile/${topCandidate.userId}`} className="group flex gap-3">
+                        <AvatarCircle candidate={topCandidate} size={72} />
+                        <div>
+                          <h2 className="text-2xl font-semibold text-white group-hover:text-accent transition-colors">
+                            {topCandidate.displayName}
+                          </h2>
+                          <p className="text-xs text-muted-foreground group-hover:text-white">
+                            {t("matcher_view_profile")}
+                          </p>
+                        </div>
+                      </Link>
                     </div>
                     {renderCandidateBadges(topCandidate)}
                   </div>
+                  {topCandidate.bio && <p className="text-sm text-muted-foreground">{topCandidate.bio}</p>}
 
                   {sharedSkills.length > 0 && (
                     <div className="space-y-2">
@@ -195,6 +230,11 @@ export default function MatcherPage() {
                       </div>
                     </div>
                   )}
+                  <div>
+                    <Button variant="link" className="px-0 text-sm" asChild>
+                      <Link href={`/profile/${topCandidate.userId}`}>{t("matcher_view_profile")}</Link>
+                    </Button>
+                  </div>
                 </div>
               </Card>
             </motion.div>

@@ -8,12 +8,14 @@ import { AvatarCard } from "@/components/AvatarCard";
 import { ArtworkCard } from "@/components/ArtworkCard";
 import { sampleUsers, sampleArtworks } from "@/lib/sample-data";
 import { useI18n } from "@/context/i18n";
+import { useSessionState } from "@/context/session";
 
 const featuredUsers = sampleUsers.slice(0, 3);
 const featuredArtworks = sampleArtworks.slice(0, 3);
 
 export default function Home() {
   const { t } = useI18n();
+  const sessionUser = useSessionState((state) => state.user);
 
   return (
     <div className="flex min-h-screen flex-col gap-16 px-6 py-12">
@@ -26,12 +28,19 @@ export default function Home() {
         </h1>
         <p className="max-w-3xl text-lg text-muted-foreground">{t("hero_subtitle")}</p>
         <div className="flex flex-wrap items-center justify-center gap-4">
-          <Button asChild>
-            <Link href="/signup">
+          {sessionUser ? (
+            <Button disabled className="cursor-not-allowed opacity-60">
               {t("cta_join")}
               <ArrowRight className="ml-2 h-4 w-4" />
-            </Link>
-          </Button>
+            </Button>
+          ) : (
+            <Button asChild>
+              <Link href="/signup">
+                {t("cta_join")}
+                <ArrowRight className="ml-2 h-4 w-4" />
+              </Link>
+            </Button>
+          )}
           <Button variant="outline" asChild>
             <Link href="/hub-map">
               <MapPin className="mr-2 h-4 w-4" />

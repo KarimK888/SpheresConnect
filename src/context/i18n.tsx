@@ -15,9 +15,11 @@ import type { Locale } from "../lib/types";
 
 type Messages = typeof en;
 
+type InterpolationValues = Record<string, string | number>;
+
 interface I18nContextValue {
   locale: Locale;
-  t: (key: keyof Messages) => string;
+  t: <Key extends keyof Messages>(key: Key, params?: InterpolationValues) => string;
   setLocale: (locale: Locale) => void;
 }
 
@@ -65,10 +67,16 @@ export const I18nProvider = ({ children }: { children: React.ReactNode }) => {
     [setLocaleStore]
   );
 
-  const t = useCallback(
-    (key: keyof Messages) => {
+  const t = useCallback<
+    <Key extends keyof Messages>(key: Key, params?: InterpolationValues) => string
+  >(
+    (key, params) => {
       const dict = dictionaries[locale] ?? dictionaries.en;
-      return dict[key] ?? key;
+      const template = dict[key] ?? key;
+      if (!params) return template;
+      return template.replace(/\{(\w+)\}/g, (match, token) =>
+        Object.prototype.hasOwnProperty.call(params, token) ? String(params[token]) : match
+      );
     },
     [locale]
   );

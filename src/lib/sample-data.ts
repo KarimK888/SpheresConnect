@@ -1,4 +1,4 @@
-﻿import type {
+import type {
   Artwork,
   Chat,
   ChatMessage,
@@ -7,8 +7,56 @@
   Hub,
   Order,
   RewardLog,
-  User
+  User,
+  UserProfile,
+  UserProfileMedia,
+  UserProfileProject
 } from "./types";
+
+const placeholderImage = (label: string, size = "600x420") =>
+  `https://placehold.co/${size}?text=${encodeURIComponent(label)}`;
+
+const makeMedia = (
+  mediaId: string,
+  title: string,
+  overrides: Partial<UserProfileMedia> = {}
+): UserProfileMedia => ({
+  mediaId,
+  type: "image",
+  title,
+  url: placeholderImage(title),
+  description: `Preview for ${title}`,
+  tags: ["portfolio"],
+  ...overrides
+});
+
+const makeProject = (
+  projectId: string,
+  title: string,
+  overrides: Partial<UserProfileProject> = {}
+): UserProfileProject => ({
+  projectId,
+  title,
+  summary: `${title} concept deck`,
+  tags: ["concept"],
+  mediaIds: [],
+  status: "live",
+  ...overrides
+});
+
+const baseProfile = (name: string, overrides: Partial<UserProfile> = {}): UserProfile => ({
+  headline: undefined,
+  locationName: undefined,
+  availability: "open",
+  timezone: "UTC",
+  coverImageUrl: placeholderImage(`${name} cover`, "1200x420"),
+  avatarType: "photo",
+  socials: {},
+  media: [],
+  projects: [],
+  preferredCollabModes: ["remote", "hybrid"],
+  ...overrides
+});
 
 const now = Date.now();
 
@@ -24,7 +72,29 @@ export const sampleUsers: User[] = [
     isVerified: true,
     language: "en",
     location: { lat: 45.5017, lng: -73.5673 },
-    joinedAt: now - 1000 * 60 * 60 * 24 * 120
+    joinedAt: now - 1000 * 60 * 60 * 24 * 120,
+    profile: baseProfile("Alina", {
+      headline: "Analog collage surfaces & projection mapping",
+      locationName: "Montreal, Canada",
+      socials: {
+        website: "https://alinavargas.com",
+        instagram: "https://instagram.com/alinavargas",
+        behance: "https://www.behance.net/alinavargas"
+      },
+      media: [
+        makeMedia("alina_collage", "Collage Bloom", { tags: ["collage", "projection"] }),
+        makeMedia("alina_studio", "Studio color script", { tags: ["research"] })
+      ],
+      projects: [
+        makeProject("alina_city_bloom", "City Bloom Residency", {
+          summary: "Immersive projection mapping with analog paper textures.",
+          mediaIds: ["alina_collage", "alina_studio"],
+          tags: ["installation", "light"],
+          link: "https://alinavargas.com/projects/city-bloom"
+        })
+      ],
+      resumeUrl: "https://cdn.spheraconnect.dev/docs/alina-cv.pdf"
+    })
   },
   {
     userId: "usr_bastien",
@@ -37,7 +107,29 @@ export const sampleUsers: User[] = [
     isVerified: true,
     language: "fr",
     location: { lat: 48.8566, lng: 2.3522 },
-    joinedAt: now - 1000 * 60 * 60 * 24 * 210
+    joinedAt: now - 1000 * 60 * 60 * 24 * 210,
+    profile: baseProfile("Bastien", {
+      headline: "Curator for immersive photo narratives",
+      locationName: "Paris, France",
+      availability: "limited",
+      socials: {
+        website: "https://bastienleroy.fr",
+        linkedin: "https://linkedin.com/in/bastienleroy",
+        instagram: "https://instagram.com/curateur_bastien"
+      },
+      media: [
+        makeMedia("bastien_edit", "Edit suite", { tags: ["curation"] }),
+        makeMedia("bastien_show", "Exhibit layout", { tags: ["exhibit"] })
+      ],
+      projects: [
+        makeProject("bastien_residency", "Residency Selection 2024", {
+          summary: "Curated 12 residencies focused on climate storytelling.",
+          mediaIds: ["bastien_show"],
+          tags: ["curation", "photography"],
+          link: "https://bastienleroy.fr/projects/residency"
+        })
+      ]
+    })
   },
   {
     userId: "usr_cyrus",
@@ -50,7 +142,27 @@ export const sampleUsers: User[] = [
     isVerified: true,
     language: "en",
     location: { lat: 43.6532, lng: -79.3832 },
-    joinedAt: now - 1000 * 60 * 60 * 24 * 90
+    joinedAt: now - 1000 * 60 * 60 * 24 * 90,
+    profile: baseProfile("Cyrus", {
+      headline: "Spatial audio + XR soundscapes",
+      locationName: "Toronto, Canada",
+      socials: {
+        website: "https://cyrusokafor.audio",
+        twitter: "https://twitter.com/cyrusokafor",
+        youtube: "https://youtube.com/@cyrusokafor"
+      },
+      media: [
+        makeMedia("cyrus_wave", "Wave studies", { tags: ["sound"] })
+      ],
+      projects: [
+        makeProject("cyrus_skyline", "Skyline Resonance", {
+          summary: "360º ambisonic installation for waterfront park.",
+          tags: ["audio", "installation"],
+          mediaIds: ["cyrus_wave"]
+        })
+      ],
+      featuredVideoUrl: "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+    })
   },
   {
     userId: "usr_daniela",
@@ -63,7 +175,26 @@ export const sampleUsers: User[] = [
     isVerified: false,
     language: "es",
     location: { lat: 19.4326, lng: -99.1332 },
-    joinedAt: now - 1000 * 60 * 60 * 24 * 45
+    joinedAt: now - 1000 * 60 * 60 * 24 * 45,
+    profile: baseProfile("Daniela", {
+      headline: "Editorial illustrator + AR stickers",
+      locationName: "Mexico City, MX",
+      socials: {
+        instagram: "https://instagram.com/daniela.draws",
+        dribbble: "https://dribbble.com/daniela"
+      },
+      media: [
+        makeMedia("daniela_story", "Story frames", { tags: ["illustration", "storyboards"] })
+      ],
+      projects: [
+        makeProject("daniela_zine", "Vibrant Zine", {
+          summary: "Limited zine with AR-enabled characters.",
+          mediaIds: ["daniela_story"],
+          tags: ["zine", "ar"],
+          link: "https://daniela.art/vibrant-zine"
+        })
+      ]
+    })
   },
   {
     userId: "usr_elio",
@@ -76,12 +207,21 @@ export const sampleUsers: User[] = [
     isVerified: true,
     language: "en",
     location: { lat: 40.7128, lng: -74.006 },
-    joinedAt: now - 1000 * 60 * 60 * 24 * 150
+    joinedAt: now - 1000 * 60 * 60 * 24 * 150,
+    profile: baseProfile("Elio", {
+      headline: "Interactive light designer",
+      locationName: "New York, USA",
+      availability: "limited",
+      socials: {
+        instagram: "https://instagram.com/eliolights",
+        website: "https://eliochen.studio"
+      }
+    })
   },
   {
     userId: "usr_fatima",
     email: "fatima@spheraconnect.art",
-    displayName: "FÃ¡tima Benali",
+    displayName: "Fátima Benali",
     bio: "Wearable tech designer crafting responsive garments.",
     skills: ["fashion", "wearables", "textiles"],
     profilePictureUrl: "/images/users/fatima.jpg",
@@ -89,7 +229,15 @@ export const sampleUsers: User[] = [
     isVerified: false,
     language: "fr",
     location: { lat: 45.764, lng: 4.8357 },
-    joinedAt: now - 1000 * 60 * 60 * 24 * 30
+    joinedAt: now - 1000 * 60 * 60 * 24 * 30,
+    profile: baseProfile("Fatima", {
+      headline: "Responsive garments & wearable tech",
+      locationName: "Lyon, France",
+      socials: {
+        instagram: "https://instagram.com/fatimawearables",
+        tiktok: "https://www.tiktok.com/@fatimawearables"
+      }
+    })
   },
   {
     userId: "usr_giovanni",
@@ -102,7 +250,15 @@ export const sampleUsers: User[] = [
     isVerified: true,
     language: "en",
     location: { lat: 41.9028, lng: 12.4964 },
-    joinedAt: now - 1000 * 60 * 60 * 24 * 220
+    joinedAt: now - 1000 * 60 * 60 * 24 * 220,
+    profile: baseProfile("Giovanni", {
+      headline: "Cinematic composer & synth engineer",
+      locationName: "Rome, Italy",
+      socials: {
+        website: "https://giovannirusso.studio",
+        youtube: "https://youtube.com/@giovanni-scores"
+      }
+    })
   },
   {
     userId: "usr_hana",
@@ -115,7 +271,15 @@ export const sampleUsers: User[] = [
     isVerified: true,
     language: "en",
     location: { lat: 35.6762, lng: 139.6503 },
-    joinedAt: now - 1000 * 60 * 60 * 24 * 300
+    joinedAt: now - 1000 * 60 * 60 * 24 * 300,
+    profile: baseProfile("Hana", {
+      headline: "XR art direction & volumetric capture",
+      locationName: "Tokyo, Japan",
+      socials: {
+        website: "https://hanasato.jp",
+        instagram: "https://instagram.com/hanaxsato"
+      }
+    })
   },
   {
     userId: "usr_isa",
@@ -128,7 +292,15 @@ export const sampleUsers: User[] = [
     isVerified: false,
     language: "es",
     location: { lat: -23.5505, lng: -46.6333 },
-    joinedAt: now - 1000 * 60 * 60 * 24 * 75
+    joinedAt: now - 1000 * 60 * 60 * 24 * 75,
+    profile: baseProfile("Isabela", {
+      headline: "Documentary photographer",
+      locationName: "São Paulo, Brazil",
+      socials: {
+        instagram: "https://instagram.com/isacrafts",
+        website: "https://isabelarocha.photo"
+      }
+    })
   },
   {
     userId: "usr_jamal",
@@ -141,7 +313,14 @@ export const sampleUsers: User[] = [
     isVerified: true,
     language: "en",
     location: { lat: 34.0522, lng: -118.2437 },
-    joinedAt: now - 1000 * 60 * 60 * 24 * 60
+    joinedAt: now - 1000 * 60 * 60 * 24 * 60,
+    profile: baseProfile("Jamal", {
+      headline: "Large-scale fabrication & metalwork",
+      locationName: "Los Angeles, USA",
+      socials: {
+        linkedin: "https://linkedin.com/in/jamal-greene"
+      }
+    })
   },
   {
     userId: "usr_kamilah",
@@ -154,7 +333,15 @@ export const sampleUsers: User[] = [
     isVerified: true,
     language: "en",
     location: { lat: 51.5072, lng: -0.1276 },
-    joinedAt: now - 1000 * 60 * 60 * 24 * 55
+    joinedAt: now - 1000 * 60 * 60 * 24 * 55,
+    profile: baseProfile("Kamilah", {
+      headline: "Cultural strategist & residency advisor",
+      locationName: "London, UK",
+      socials: {
+        linkedin: "https://linkedin.com/in/kamilah-osei"
+      },
+      availability: "limited"
+    })
   },
   {
     userId: "usr_admin",
@@ -167,7 +354,12 @@ export const sampleUsers: User[] = [
     isVerified: true,
     language: "en",
     location: { lat: 45.5017, lng: -73.5673 },
-    joinedAt: now - 1000 * 60 * 60 * 24 * 400
+    joinedAt: now - 1000 * 60 * 60 * 24 * 400,
+    profile: baseProfile("Admin", {
+      headline: "Platform curator",
+      locationName: "Global",
+      availability: "limited"
+    })
   }
 ];
 
@@ -255,7 +447,7 @@ export const sampleMessages: ChatMessage[] = [
     messageId: "msg_2",
     chatId: "chat_alina_bastien",
     senderId: "usr_bastien",
-    content: "Love the textures—let's prep for the Paris show.",
+    content: "Love the textures�let's prep for the Paris show.",
     attachments: [],
     createdAt: now - 1000 * 60 * 18,
     deliveredTo: ["usr_alina", "usr_bastien"],
@@ -352,4 +544,5 @@ export const sampleRewardLogs: RewardLog[] = [
 ];
 
 export const verifiedAdminId = "usr_admin";
+
 

@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -24,6 +25,7 @@ type FormValues = z.infer<typeof schema>;
 export default function LoginPage() {
   const { t } = useI18n();
   const { login, loading } = useAuth();
+  const router = useRouter();
   const [error, setError] = useState<string | null>(null);
   const {
     register,
@@ -35,6 +37,7 @@ export default function LoginPage() {
     try {
       await login(email, password);
       setError(null);
+      router.push("/");
     } catch (err) {
       setError(err instanceof Error ? err.message : t("auth_login_error"));
     }

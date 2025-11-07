@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import { useCallback, useMemo, useState } from "react";
 import { motion } from "framer-motion";
@@ -9,6 +9,14 @@ import { useI18n } from "@/context/i18n";
 interface FileDropProps {
   onUploaded: (fileUrl: string) => void;
 }
+
+const readFileAsDataUrl = (file: File) =>
+  new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result as string);
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(file);
+  });
 
 export const FileDrop = ({ onUploaded }: FileDropProps) => {
   const [dragActive, setDragActive] = useState(false);
@@ -21,11 +29,24 @@ export const FileDrop = ({ onUploaded }: FileDropProps) => {
       setUploading(true);
       try {
         const extension = file.name.split(".").pop() ?? "dat";
-        const { fileUrl } = await backend.uploads.createSignedUrl({
-          mimeType: file.type,
+        const { uploadUrl, fileUrl } = await backend.uploads.createSignedUrl({
+          mimeType: file.type || "application/octet-stream",
           extension
         });
+        const response = await fetch(uploadUrl, {
+          method: "PUT",
+          headers: {
+            "Content-Type": file.type || "application/octet-stream"
+          },
+          body: file
+        });
+        if (!response.ok) {
+          throw new Error("upload_failed");
+        }
         onUploaded(fileUrl);
+      } catch {
+        const dataUrl = await readFileAsDataUrl(file);
+        onUploaded(dataUrl);
       } finally {
         setUploading(false);
       }
@@ -61,12 +82,7 @@ export const FileDrop = ({ onUploaded }: FileDropProps) => {
         handleFiles(event.dataTransfer.files);
       }}
     >
-      <input
-        type="file"
-        className="hidden"
-        onChange={(event) => handleFiles(event.target.files)}
-        disabled={uploading}
-      />
+      <input type="file" className="hidden" onChange={(event) => handleFiles(event.target.files)} disabled={uploading} />
       <p>{uploading ? t("filedrop_uploading") : t("filedrop_prompt")}</p>
       <Button variant="outline" type="button" disabled={uploading}>
         {t("filedrop_browse")}

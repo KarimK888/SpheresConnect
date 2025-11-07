@@ -14,6 +14,7 @@ export type Database = {
           language: "en" | "fr" | "es" | null;
           location: { lat: number; lng: number } | null;
           joined_at: string;
+          profile: Record<string, unknown> | null;
         };
         Insert: {
           user_id: string;
@@ -27,6 +28,7 @@ export type Database = {
           language?: "en" | "fr" | "es" | null;
           location?: { lat: number; lng: number } | null;
           joined_at?: string;
+          profile?: Record<string, unknown> | null;
         };
         Update: {
           display_name?: string | null;
@@ -38,6 +40,7 @@ export type Database = {
           language?: "en" | "fr" | "es" | null;
           location?: { lat: number; lng: number } | null;
           joined_at?: string;
+          profile?: Record<string, unknown> | null;
         };
       };
       chats: {
@@ -79,6 +82,33 @@ export type Database = {
           name?: string;
           location?: { lat: number; lng: number };
           active_users?: string[];
+        };
+      };
+      checkins: {
+        Row: {
+          checkin_id: string;
+          user_id: string;
+          hub_id: string | null;
+          location: { lat: number; lng: number } | null;
+          status: "online" | "offline" | null;
+          expires_at: string;
+          created_at: string;
+        };
+        Insert: {
+          checkin_id: string;
+          user_id: string;
+          hub_id?: string | null;
+          location?: { lat: number; lng: number } | null;
+          status?: "online" | "offline" | null;
+          expires_at?: string;
+          created_at?: string;
+        };
+        Update: {
+          hub_id?: string | null;
+          location?: { lat: number; lng: number } | null;
+          status?: "online" | "offline" | null;
+          expires_at?: string;
+          created_at?: string;
         };
       };
       messages: {

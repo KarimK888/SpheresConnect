@@ -6,7 +6,9 @@ import {
   useMemo,
   useRef,
   useState,
-  type KeyboardEvent
+  type Dispatch,
+  type KeyboardEvent,
+  type SetStateAction
 } from "react";
 import {
   BellOff,
@@ -31,6 +33,7 @@ import {
   Trash2,
   UserPlus
 } from "lucide-react";
+import Image from "next/image";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -126,7 +129,6 @@ export default function MessagesPage() {
 
   const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
-  const selectedMessages = selectedChatId ? messagesByChat[selectedChatId] ?? [] : [];
   const selectedParticipants = selectedChatId ? participantsByChat[selectedChatId] ?? [] : [];
 
   useEffect(() => {
@@ -542,10 +544,20 @@ export default function MessagesPage() {
               chat.memberIds
                 .map((id) => directory[id]?.displayName ?? id)
                 .join(", ");
+            const handleKeyPress = (event: KeyboardEvent<HTMLDivElement>) => {
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                handleSelectChat(chat.chatId);
+              }
+            };
+
             return (
-              <button
+              <div
                 key={chat.chatId}
+                role="button"
+                tabIndex={0}
                 onClick={() => handleSelectChat(chat.chatId)}
+                onKeyDown={handleKeyPress}
                 className={cn(
                   "w-full rounded-xl border px-4 py-3 text-left text-sm transition-colors",
                   isActive ? "border-accent bg-accent/10 text-white" : "border-border/40 bg-background/40 hover:border-border"
@@ -575,7 +587,7 @@ export default function MessagesPage() {
                     {chat.lastMessage.content ?? t("messages_attachment")}
                   </p>
                 )}
-              </button>
+              </div>
             );
           })}
           {!visibleChats.length && (
@@ -902,8 +914,8 @@ function MessageThread({
 
 interface PollPreviewProps {
   poll: {
-    question: string;
-    options: { id?: string; label: string; votes?: string[] }[];
+    question?: string;
+    options?: { id?: string; label: string; votes?: string[] }[];
     createdBy?: string;
     expiresAt?: number;
   };
@@ -913,15 +925,17 @@ interface PollPreviewProps {
 function PollPreview({ poll, isOwn }: PollPreviewProps) {
   const { t } = useI18n();
   const closesAt = poll.expiresAt ? formatTimestamp(poll.expiresAt) : undefined;
+  const options = poll.options ?? [];
+  const question = poll.question ?? t("messages_poll_question");
   return (
     <div className="space-y-2 rounded-2xl border border-border/60 bg-background/40 px-4 py-3 text-left text-sm">
       <div className="flex items-center justify-between text-xs text-muted-foreground">
         <span>{t("messages_poll_header")}</span>
         {closesAt && <span>{t("messages_poll_closes", { time: closesAt })}</span>}
       </div>
-      <p className="text-white">{poll.question}</p>
+      <p className="text-white">{question}</p>
       <div className="space-y-2 text-xs text-muted-foreground">
-        {poll.options.map((option) => (
+        {options.map((option) => (
           <div key={option.id ?? option.label} className="flex items-center justify-between rounded-xl bg-border/40 px-3 py-2">
             <span>{option.label}</span>
             <span>{t("messages_poll_votes", { count: option.votes?.length ?? 0 })}</span>
@@ -946,8 +960,16 @@ function AttachmentPreview({ attachment }: AttachmentPreviewProps) {
   const { type, url, name } = attachment;
   if (type === "image" || type === "gif" || type === "sticker") {
     return (
-      <div className="overflow-hidden rounded-xl border border-border/60">
-        <img src={url} alt={name ?? t("messages_attachment")} className="max-h-64 w-full object-cover" />
+      <div className="relative max-h-64 overflow-hidden rounded-xl border border-border/60">
+        <Image
+          src={url}
+          alt={name ?? t("messages_attachment")}
+          width={800}
+          height={600}
+          className="h-full w-full object-cover"
+          sizes="(max-width: 768px) 100vw, 512px"
+          unoptimized
+        />
       </div>
     );
   }
@@ -982,21 +1004,21 @@ function AttachmentPreview({ attachment }: AttachmentPreviewProps) {
 interface ComposerProps {
   disabled: boolean;
   draft: string;
-  setDraft: (value: string) => void;
+  setDraft: Dispatch<SetStateAction<string>>;
   attachments: ChatAttachment[];
   onRemoveAttachment: (id: string) => void;
   onAttachmentChange: (files: FileList | null) => void;
   isSilent: boolean;
-  setIsSilent: (value: boolean) => void;
+  setIsSilent: Dispatch<SetStateAction<boolean>>;
   scheduledFor: string;
-  setScheduledFor: (value: string) => void;
+  setScheduledFor: Dispatch<SetStateAction<string>>;
   onSend: () => void;
   isEditing: boolean;
   onCancelEdit: () => void;
   showPollBuilder: boolean;
-  setShowPollBuilder: (value: boolean) => void;
+  setShowPollBuilder: Dispatch<SetStateAction<boolean>>;
   pollBuilder: DraftPoll;
-  setPollBuilder: (value: DraftPoll) => void;
+  setPollBuilder: Dispatch<SetStateAction<DraftPoll>>;
 }
 
 function Composer({

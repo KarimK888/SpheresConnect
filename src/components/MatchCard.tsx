@@ -1,5 +1,7 @@
-﻿"use client";
+"use client";
 
+import Image from "next/image";
+import Link from "next/link";
 import { motion } from "framer-motion";
 import { useI18n } from "@/context/i18n";
 import type { MatchSuggestion } from "@/lib/types";
@@ -29,10 +31,28 @@ export const MatchCard = ({ user, onConnect, onSkip }: MatchCardProps) => {
       <Card>
         <CardHeader>
           <div className="flex items-start justify-between gap-3">
-            <CardTitle className="flex items-center gap-2">
-              {user.displayName}
-              {user.isVerified && <Badge>{t("match_card_verified")}</Badge>}
-            </CardTitle>
+            <div className="flex items-center gap-3">
+              <Link href={`/profile/${user.userId}`} className="group flex items-center gap-3">
+                <div className="flex h-14 w-14 items-center justify-center overflow-hidden rounded-full border border-border bg-background/70 transition-transform group-hover:scale-105">
+                  {user.profilePictureUrl ? (
+                    <Image
+                      src={user.profilePictureUrl}
+                      alt={user.displayName}
+                      width={56}
+                      height={56}
+                      className="h-full w-full object-cover"
+                      unoptimized
+                    />
+                  ) : (
+                    <span className="text-lg font-semibold uppercase">{user.displayName.slice(0, 2)}</span>
+                  )}
+                </div>
+                <CardTitle className="flex items-center gap-2">
+                  {user.displayName}
+                  {user.isVerified && <Badge>{t("match_card_verified")}</Badge>}
+                </CardTitle>
+              </Link>
+            </div>
             {hasHubMeta && (
               <div className="flex flex-col items-end gap-1 text-xs text-muted-foreground">
                 {user.sharedHub && <Badge variant="accent">{t("matcher_same_hub_badge")}</Badge>}

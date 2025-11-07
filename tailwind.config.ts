@@ -1,5 +1,7 @@
 import type { Config } from "tailwindcss";
 
+const withOpacity = (variable: string) => `rgb(var(${variable}) / <alpha-value>)`;
+
 const config: Config = {
   darkMode: ["class"],
   content: [
@@ -13,23 +15,28 @@ const config: Config = {
   theme: {
     extend: {
       colors: {
+        background: withOpacity("--background"),
+        foreground: withOpacity("--foreground"),
+        border: withOpacity("--border"),
+        muted: {
+          DEFAULT: withOpacity("--muted"),
+          foreground: withOpacity("--muted-foreground")
+        },
+        card: {
+          DEFAULT: withOpacity("--card"),
+          foreground: withOpacity("--card-foreground")
+        },
         primary: {
-          DEFAULT: "#167050",
-          foreground: "#F4F7F5"
+          DEFAULT: withOpacity("--primary"),
+          foreground: withOpacity("--primary-foreground")
         },
         accent: {
-          DEFAULT: "#B33A50",
-          foreground: "#FFE4EA"
+          DEFAULT: withOpacity("--accent"),
+          foreground: withOpacity("--accent-foreground")
         },
-        background: "#111111",
-        muted: {
-          DEFAULT: "#222222",
-          foreground: "#F1F0F5"
-        },
-        border: "#2A2A2A",
-        card: {
-          DEFAULT: "#1B1B1B",
-          foreground: "#F9F9FB"
+        destructive: {
+          DEFAULT: withOpacity("--destructive"),
+          foreground: withOpacity("--destructive-foreground")
         }
       }
     }
