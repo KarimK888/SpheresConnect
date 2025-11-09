@@ -144,6 +144,11 @@ export const ProfileClient = ({ user, listings, viewerId, onUserUpdated }: Profi
   const [saving, setSaving] = useState(false);
   const [messaging, setMessaging] = useState(false);
   const [feedback, setFeedback] = useState<{ type: "success" | "error"; message: string } | null>(null);
+  const [selectedListing, setSelectedListing] = useState<Artwork | null>(null);
+  const [purchaseState, setPurchaseState] = useState<{ status: "idle" | "loading" | "success" | "error"; message?: string }>({
+    status: "idle"
+  });
+  const [purchaseIntent, setPurchaseIntent] = useState<{ clientSecret: string; orderId: string } | null>(null);
 
   useEffect(() => {
     setProfileUser(user);
@@ -198,6 +203,53 @@ export const ProfileClient = ({ user, listings, viewerId, onUserUpdated }: Profi
       setMessaging(false);
     }
   }, [backend, router, viewerId, profileUser.userId, t]);
+
+  const openListing = useCallback((artwork: Artwork) => {
+    setSelectedListing(artwork);
+    setPurchaseState({ status: "idle" });
+    setPurchaseIntent(null);
+  }, []);
+
+  const closeListing = useCallback(() => {
+    setSelectedListing(null);
+    setPurchaseState({ status: "idle" });
+    setPurchaseIntent(null);
+  }, []);
+
+  const handlePurchase = useCallback(
+    async (artwork: Artwork) => {
+      if (!viewerId) {
+        router.push("/login");
+        return;
+      }
+
+      setPurchaseState({ status: "loading" });
+      setPurchaseIntent(null);
+      try {
+        const response = await fetch("/api/orders", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ artworkId: artwork.artworkId })
+        });
+        if (!response.ok) {
+          const payload = await response.json().catch(() => ({}));
+          throw new Error(payload?.error?.message ?? "Unable to start purchase");
+        }
+        const payload = await response.json();
+        setPurchaseIntent({
+          clientSecret: payload.clientSecret,
+          orderId: payload.order.orderId
+        });
+        setPurchaseState({ status: "success", message: t("profile_collect_success") });
+      } catch (error) {
+        setPurchaseState({
+          status: "error",
+          message: error instanceof Error ? error.message : t("profile_collect_error")
+        });
+      }
+    },
+    [router, t, viewerId]
+  );
 
   const handleSave = useCallback(async () => {
     setSaving(true);
@@ -412,7 +464,14 @@ export const ProfileClient = ({ user, listings, viewerId, onUserUpdated }: Profi
         <TabsContent value="portfolio">
           <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
             {listings.slice(0, 6).map((artwork) => (
-              <ArtworkCard key={artwork.artworkId} artwork={artwork} />
+              <ArtworkCard
+                key={artwork.artworkId}
+                artwork={artwork}
+                onSelect={openListing}
+                onAction={() => openListing(artwork)}
+                actionLabel={t("profile_collect_cta")}
+                disabled={isOwner}
+              />
             ))}
             {listings.length === 0 && (
               <Card className="border-dashed bg-border/10 p-6 text-sm text-muted-foreground">
@@ -425,7 +484,14 @@ export const ProfileClient = ({ user, listings, viewerId, onUserUpdated }: Profi
         <TabsContent value="listings">
           <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
             {listings.map((artwork) => (
-              <ArtworkCard key={artwork.artworkId} artwork={artwork} />
+              <ArtworkCard
+                key={artwork.artworkId}
+                artwork={artwork}
+                onSelect={openListing}
+                onAction={() => openListing(artwork)}
+                actionLabel={t("profile_collect_cta")}
+                disabled={isOwner}
+              />
             ))}
           </div>
         </TabsContent>
@@ -438,6 +504,16 @@ export const ProfileClient = ({ user, listings, viewerId, onUserUpdated }: Profi
           </div>
         </TabsContent>
       </Tabs>
+      {selectedListing && (
+        <ListingPreviewOverlay
+          artwork={selectedListing}
+          onClose={closeListing}
+          onPurchase={handlePurchase}
+          purchaseState={purchaseState}
+          purchaseIntent={purchaseIntent}
+          isOwner={isOwner}
+        />
+      )}
     </div>
   );
 };
@@ -915,6 +991,126 @@ const ProjectsList = ({
           ) : null}
         </div>
       ))}
+    </div>
+  );
+};
+
+interface ListingPreviewOverlayProps {
+  artwork: Artwork;
+  onClose: () => void;
+  onPurchase: (artwork: Artwork) => void;
+  purchaseState: { status: "idle" | "loading" | "success" | "error"; message?: string };
+  purchaseIntent: { clientSecret: string; orderId: string } | null;
+  isOwner: boolean;
+}
+
+const ListingPreviewOverlay = ({
+  artwork,
+  onClose,
+  onPurchase,
+  purchaseState,
+  purchaseIntent,
+  isOwner
+}: ListingPreviewOverlayProps) => {
+  const { t } = useI18n();
+  const isLoading = purchaseState.status === "loading";
+  const showFeedback = purchaseState.status === "success" || purchaseState.status === "error";
+
+  return (
+    <div
+      className="fixed inset-0 z-40 flex items-center justify-center bg-black/70 px-4 py-10"
+      onClick={(event) => {
+        if (event.target === event.currentTarget) {
+          onClose();
+        }
+      }}
+      role="presentation"
+    >
+      <Card
+        className="relative z-10 max-h-[90vh] w-full max-w-5xl overflow-y-auto border-border/80 bg-background/95 p-6"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <p className="text-xs uppercase tracking-[0.3em] text-muted-foreground">{t("marketplace_detail_heading")}</p>
+            <h2 className="text-2xl font-semibold text-white">{artwork.title}</h2>
+          </div>
+          <Button variant="ghost" size="sm" onClick={onClose}>
+            <X className="mr-2 h-4 w-4" />
+            {t("marketplace_detail_close")}
+          </Button>
+        </div>
+
+        <div className="mt-6 grid gap-6 md:grid-cols-2">
+          <div className="space-y-4">
+            <div className="relative aspect-[4/3] overflow-hidden rounded-2xl bg-black/20">
+              <Image
+                src={artwork.mediaUrls[0] ?? "https://placehold.co/800x600?text=Artwork"}
+                alt={artwork.title}
+                fill
+                className="object-cover"
+                sizes="(max-width: 768px) 100vw, 50vw"
+              />
+            </div>
+            <p className="text-sm text-muted-foreground">
+              {artwork.description ?? t("marketplace_detail_description")}
+            </p>
+            <div className="flex flex-wrap gap-2">
+              {artwork.tags.map((tag) => (
+                <Badge key={tag} variant="outline">
+                  #{tag}
+                </Badge>
+              ))}
+            </div>
+          </div>
+
+          <div className="space-y-5 rounded-2xl border border-border/60 bg-background/40 p-6">
+            <div>
+              <p className="text-xs uppercase tracking-[0.3em] text-muted-foreground">
+                {t("marketplace_detail_price")}
+              </p>
+              <p className="text-3xl font-semibold text-white">
+                {(artwork.price / 100).toLocaleString(undefined, {
+                  style: "currency",
+                  currency: artwork.currency?.toUpperCase() ?? "USD",
+                  minimumFractionDigits: 0
+                })}
+              </p>
+            </div>
+            <Separator className="border-border/40" />
+            {isOwner ? (
+              <p className="text-sm text-muted-foreground">{t("profile_collect_owner")}</p>
+            ) : (
+              <Button
+                size="lg"
+                className="w-full"
+                disabled={isLoading}
+                onClick={() => onPurchase(artwork)}
+              >
+                {isLoading ? t("profile_collect_processing") : t("profile_collect_cta")}
+              </Button>
+            )}
+            {showFeedback && purchaseState.message && (
+              <div
+                className={cn(
+                  "rounded-xl border px-4 py-3 text-sm",
+                  purchaseState.status === "success"
+                    ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-200"
+                    : "border-destructive/40 bg-destructive/10 text-destructive"
+                )}
+              >
+                {purchaseState.message}
+              </div>
+            )}
+            {purchaseIntent && (
+              <div className="rounded-xl border border-accent/40 bg-accent/5 p-4 text-xs text-muted-foreground">
+                <p className="text-sm font-semibold text-white">{t("profile_collect_order_label")}</p>
+                <p className="mt-1 font-mono text-xs text-white/80">{purchaseIntent.orderId}</p>
+              </div>
+            )}
+          </div>
+        </div>
+      </Card>
     </div>
   );
 };

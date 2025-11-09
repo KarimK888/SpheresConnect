@@ -5,6 +5,7 @@ import { SessionProvider } from "../context/session";
 import { ThemeProvider } from "../context/theme";
 import { I18nProvider } from "../context/i18n";
 import { AppShell } from "../components/layout/AppShell";
+import { NotificationsProvider } from "../context/notifications";
 
 const displayFont = Space_Grotesk({
   subsets: ["latin"],
@@ -39,7 +40,9 @@ export default function RootLayout({
         <ThemeProvider attribute="class" defaultTheme="dark" enableSystem={false}>
           <SessionProvider>
             <I18nProvider>
-              <AppShell>{children}</AppShell>
+              <NotificationsProvider>
+                <AppShell>{children}</AppShell>
+              </NotificationsProvider>
             </I18nProvider>
           </SessionProvider>
         </ThemeProvider>

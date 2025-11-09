@@ -79,7 +79,18 @@ export const Chat = ({ chatId, currentUser, participants }: ChatProps) => {
                   )}
                 </div>
                 <div className={`max-w-[75%] rounded-2xl px-4 py-2 ${isSelf ? "bg-accent text-black" : "bg-border/40"}`}>
-                  {message.content ?? <a href={message.mediaUrl}>{t("chat_attachment")}</a>}
+                  {message.content ? (
+                    message.content
+                  ) : message.attachments?.length ? (
+                    <a
+                      className="underline"
+                      href={message.attachments[0].url}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      {message.attachments[0].name ?? t("chat_attachment")}
+                    </a>
+                  ) : null}
                 </div>
               </motion.div>
             );

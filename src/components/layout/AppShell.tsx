@@ -10,6 +10,7 @@ import { ThemeToggle } from "./ThemeToggle";
 import { LanguageSwitcher } from "./LanguageSwitcher";
 import { useAuth } from "@/hooks/useAuth";
 import { useI18n } from "@/context/i18n";
+import { NotificationBell } from "@/components/notifications/NotificationBell";
 
 export const AppShell = ({ children }: { children: React.ReactNode }) => {
   const pathname = usePathname();
@@ -76,6 +77,7 @@ export const AppShell = ({ children }: { children: React.ReactNode }) => {
           <div className="flex items-center gap-2">
             <LanguageSwitcher />
             <ThemeToggle />
+            <NotificationBell />
             {user ? (
               <div className="relative hidden md:block" ref={profileRef}>
                 <button

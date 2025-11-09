@@ -25,8 +25,18 @@ import {
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-const SUPABASE_SERVICE_ROLE_KEY =
-  process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.SUPABASE_SERVICE_ROLE;
+const isServerRuntime = typeof window === "undefined";
+let SUPABASE_SERVICE_ROLE_KEY: string | null = null;
+if (isServerRuntime) {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires, global-require
+    SUPABASE_SERVICE_ROLE_KEY = require("./supabase-env.server").getSupabaseServiceRoleKey();
+  } catch (error) {
+    console.warn("[supabase] Unable to resolve service role key on server:", error);
+    SUPABASE_SERVICE_ROLE_KEY = null;
+  }
+}
+const SUPABASE_STORAGE_BUCKET = process.env.NEXT_PUBLIC_SUPABASE_STORAGE_BUCKET ?? "artwork-media";
 
 if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
   console.warn(
@@ -52,11 +62,12 @@ const ensureSupabaseClients = () => {
   const anon = createClient<Database>(SUPABASE_URL, SUPABASE_ANON_KEY, {
     auth: authOptions
   });
-  const admin = SUPABASE_SERVICE_ROLE_KEY
-    ? createClient<Database>(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
-        auth: authOptions
-      })
-    : anon;
+  const admin =
+    SUPABASE_SERVICE_ROLE_KEY && isServerRuntime
+      ? createClient<Database>(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
+          auth: authOptions
+        })
+      : anon;
   return { anon, admin };
 };
 
@@ -67,8 +78,31 @@ let realtimeChannel: RealtimeChannel | null = null;
 let currentSession: AuthSession | null = null;
 let fallbackEvents = [...sampleEvents];
 let fallbackCheckins = [...sampleCheckins];
+let fallbackArtworks = [...sampleArtworks];
+let fallbackOrders = [...sampleOrders];
 
 const CHECKIN_TTL_MS = 1000 * 60 * 60 * 4;
+const STATUS_TAG_PREFIX = "__status:";
+
+const decodeStatusFromTags = (tags: string[]): { cleanTags: string[]; status: Artwork["status"] } => {
+  let derived: Artwork["status"] | null = null;
+  const cleanTags = tags.filter((tag) => {
+    if (tag.startsWith(STATUS_TAG_PREFIX)) {
+      const value = tag.slice(STATUS_TAG_PREFIX.length) as Artwork["status"];
+      if (value === "listed" || value === "negotiation" || value === "sold") {
+        derived = value;
+      }
+      return false;
+    }
+    return true;
+  });
+  return { cleanTags, status: derived ?? "listed" };
+};
+
+const encodeTagsWithStatus = (tags: string[], status: Artwork["status"]) => {
+  const base = tags.filter((tag) => !tag.startsWith(STATUS_TAG_PREFIX));
+  return [...base, `${STATUS_TAG_PREFIX}${status}`];
+};
 
 const cleanupFallbackCheckins = () => {
   const now = Date.now();
@@ -147,7 +181,9 @@ const mapChatRow = (row: Database["public"]["Tables"]["chats"]["Row"]): Chat => 
   memberIds: row.member_ids,
   isGroup: row.is_group,
   title: row.title ?? undefined,
-  createdAt: new Date(row.created_at).getTime()
+  createdAt: new Date(row.created_at).getTime(),
+  archivedBy: row.archived_by ?? [],
+  hiddenBy: row.hidden_by ?? []
 });
 
 const mapHubRow = (row: Database["public"]["Tables"]["hubs"]["Row"]): Hub => ({
@@ -175,8 +211,14 @@ const mapArtworkRow = (row: Database["public"]["Tables"]["artworks"]["Row"]): Ar
   mediaUrls: row.media_urls,
   price: row.price,
   currency: row.currency,
-  isSold: row.is_sold,
-  tags: row.tags,
+  ...(() => {
+    const { cleanTags, status } = decodeStatusFromTags(row.tags ?? []);
+    return {
+      status,
+      isSold: status === "sold" || row.is_sold,
+      tags: cleanTags
+    };
+  })(),
   createdAt: new Date(row.created_at).getTime()
 });
 
@@ -358,6 +400,22 @@ const ensureRealtimeChannel = (client: SupabaseClient<Database>) => {
         expiresAt: data.expiresAt
       });
     })
+    .on(
+      "postgres_changes",
+      { event: "UPDATE", schema: "public", table: "chats" },
+      (payload) => {
+        const row = payload.new as Database["public"]["Tables"]["chats"]["Row"];
+        emitEvent({ type: "chat:updated", chat: mapChatRow(row) });
+      }
+    )
+    .on(
+      "postgres_changes",
+      { event: "DELETE", schema: "public", table: "chats" },
+      (payload) => {
+        const row = payload.old as Database["public"]["Tables"]["chats"]["Row"];
+        emitEvent({ type: "chat:removed", chatId: row.chat_id });
+      }
+    )
     .subscribe();
 
   return realtimeChannel;
@@ -641,7 +699,9 @@ export const createSupabaseBackend = (): BackendAdapter => {
           .select("*")
           .contains("member_ids", [userId]);
         if (error) throw error;
-        return (data ?? []).map(mapChatRow);
+        return (data ?? [])
+          .filter((row) => !((row.hidden_by ?? []).includes(userId)))
+          .map(mapChatRow);
       },
       list: async ({ chatId }) => {
         const { data, error } = await admin
@@ -824,11 +884,57 @@ export const createSupabaseBackend = (): BackendAdapter => {
           member_ids: memberIds,
           is_group: isGroup,
           title: title ?? null,
-          created_at: new Date().toISOString()
+          created_at: new Date().toISOString(),
+          archived_by: [],
+          hidden_by: []
         };
         const { data, error } = await admin.from("chats").insert(chat).select("*").single();
         if (error) throw error;
         return mapChatRow(data);
+      },
+      archiveChat: async ({ chatId, userId, archived }) => {
+        const { data: row, error } = await admin.from("chats").select("*").eq("chat_id", chatId).single();
+        if (error || !row) throw error ?? new Error("Chat not found");
+        if (!row.member_ids.includes(userId)) {
+          throw new Error("User not in chat");
+        }
+        const archiveSet = new Set(row.archived_by ?? []);
+        if (archived) {
+          archiveSet.add(userId);
+        } else {
+          archiveSet.delete(userId);
+        }
+        const { data: updated, error: updateError } = await admin
+          .from("chats")
+          .update({ archived_by: Array.from(archiveSet) })
+          .eq("chat_id", chatId)
+          .select("*")
+          .single();
+        if (updateError || !updated) {
+          throw updateError ?? new Error("Unable to update chat");
+        }
+        return mapChatRow(updated);
+      },
+      removeChat: async ({ chatId, userId }) => {
+        const { data: row, error } = await admin.from("chats").select("*").eq("chat_id", chatId).single();
+        if (error || !row) throw error ?? new Error("Chat not found");
+        if (!row.member_ids.includes(userId)) {
+          throw new Error("User not in chat");
+        }
+        const hiddenSet = new Set(row.hidden_by ?? []);
+        if (hiddenSet.has(userId)) return;
+        hiddenSet.add(userId);
+        const shouldDelete = row.member_ids.every((id) => hiddenSet.has(id));
+        if (shouldDelete) {
+          await admin.from("messages").delete().eq("chat_id", chatId);
+          await admin.from("chats").delete().eq("chat_id", chatId);
+          return;
+        }
+        const { error: updateError } = await admin
+          .from("chats")
+          .update({ hidden_by: Array.from(hiddenSet) })
+          .eq("chat_id", chatId);
+        if (updateError) throw updateError;
       },
       subscribe: (handler) => {
         listeners.add(handler);
@@ -846,37 +952,62 @@ export const createSupabaseBackend = (): BackendAdapter => {
           if (error) {
             console.warn("[supabase] artworks.list falling back to sample data:", error.message);
           }
-          return sampleArtworks.filter((artwork) => {
+          return fallbackArtworks.filter((artwork) => {
             const withinTag = tag ? artwork.tags.includes(tag) : true;
             const aboveMin = typeof priceMin === "number" ? artwork.price >= priceMin : true;
             const belowMax = typeof priceMax === "number" ? artwork.price <= priceMax : true;
             return withinTag && aboveMin && belowMax;
           });
         }
-        return data.map(mapArtworkRow);
+        const mapped = data.map(mapArtworkRow);
+        fallbackArtworks = mapped;
+        return mapped;
       },
       createListing: async (input) => {
-        const entry: Database["public"]["Tables"]["artworks"]["Insert"] = {
-          artwork_id: input.artworkId ?? generateId(),
-          artist_id: input.artistId,
+        const status = input.status ?? (input.isSold ? "sold" : "listed");
+        const tagsWithStatus = encodeTagsWithStatus(input.tags ?? [], status);
+        const payload = {
+          artworkId: input.artworkId ?? generateId(),
+          artistId: input.artistId,
           title: input.title,
-          description: input.description ?? null,
-          media_urls: input.mediaUrls,
+          description: input.description,
+          mediaUrls: input.mediaUrls,
           price: input.price,
-          currency: input.currency,
-          is_sold: input.isSold,
-          tags: input.tags,
-          created_at: new Date(input.createdAt ?? Date.now()).toISOString()
-        };
-        const { data, error } = await admin
-          .from("artworks")
-          .upsert(entry, { onConflict: "artwork_id" })
-          .select("*")
-          .single();
-        if (error || !data) {
-          throw error ?? new Error("Unable to create listing");
+          currency: input.currency ?? "usd",
+          status,
+          isSold: status === "sold",
+          tags: input.tags ?? [],
+          createdAt: input.createdAt ?? Date.now()
+        } satisfies Artwork;
+        try {
+          const entry: Database["public"]["Tables"]["artworks"]["Insert"] = {
+            artwork_id: payload.artworkId,
+            artist_id: payload.artistId,
+            title: payload.title,
+            description: payload.description ?? null,
+            media_urls: payload.mediaUrls,
+            price: payload.price,
+            currency: payload.currency,
+            is_sold: payload.isSold,
+            tags: tagsWithStatus,
+            created_at: new Date(payload.createdAt).toISOString()
+          };
+          const { data, error } = await admin
+            .from("artworks")
+            .upsert(entry, { onConflict: "artwork_id" })
+            .select("*")
+            .single();
+          if (error || !data) {
+            throw error ?? new Error("Unable to create listing");
+          }
+          const mapped = mapArtworkRow(data);
+          fallbackArtworks = [mapped, ...fallbackArtworks.filter((art) => art.artworkId !== mapped.artworkId)];
+          return mapped;
+        } catch (error) {
+          console.warn("[supabase] artworks.createListing falling back:", error instanceof Error ? error.message : error);
+          fallbackArtworks = [payload, ...fallbackArtworks.filter((art) => art.artworkId !== payload.artworkId)];
+          return payload;
         }
-        return mapArtworkRow(data);
       },
       getDashboard: async (userId) => {
         const { data: listingRows, error: listingError } = await admin
@@ -892,21 +1023,192 @@ export const createSupabaseBackend = (): BackendAdapter => {
 
         const listings =
           listingError || !listingRows || listingRows.length === 0
-            ? sampleArtworks.filter((artwork) => artwork.artistId === userId)
+            ? fallbackArtworks.filter((artwork) => artwork.artistId === userId)
             : listingRows.map(mapArtworkRow);
+        if (!listingError && listingRows) {
+          fallbackArtworks = fallbackArtworks.map((art) => {
+            const updated = listings.find((item) => item.artworkId === art.artworkId);
+            return updated ?? art;
+          });
+        }
         const orders =
           orderError || !orderRows || orderRows.length === 0
-            ? sampleOrders.filter((order) => order.sellerId === userId)
+            ? fallbackOrders.filter((order) => order.sellerId === userId)
             : orderRows.map(mapOrderRow);
+        if (!orderError && orderRows) {
+          fallbackOrders = fallbackOrders.map((order) => {
+            const updated = orders.find((item) => item.orderId === order.orderId);
+            return updated ?? order;
+          });
+        }
         return { listings, orders };
+      },
+      updateStatus: async ({ artworkId, status }) => {
+        try {
+          const { data: existing, error: fetchError } = await admin
+            .from("artworks")
+            .select("*")
+            .eq("artwork_id", artworkId)
+            .single();
+          if (fetchError || !existing) {
+            throw fetchError ?? new Error("Listing not found");
+          }
+          const updatedTags = encodeTagsWithStatus(existing.tags ?? [], status);
+          const { data, error } = await admin
+            .from("artworks")
+            .update({ is_sold: status === "sold", tags: updatedTags })
+            .eq("artwork_id", artworkId)
+            .select("*")
+            .single();
+          if (error || !data) {
+            throw error ?? new Error("Unable to update listing");
+          }
+          const mapped = mapArtworkRow(data);
+          fallbackArtworks = fallbackArtworks.map((art) => (art.artworkId === mapped.artworkId ? mapped : art));
+          return mapped;
+        } catch (error) {
+          console.warn("[supabase] artworks.updateStatus falling back:", error instanceof Error ? error.message : error);
+          let updated: Artwork | undefined;
+          fallbackArtworks = fallbackArtworks.map((art) => {
+            if (art.artworkId === artworkId) {
+              updated = { ...art, status, isSold: status === "sold" };
+              return updated;
+            }
+            return art;
+          });
+          if (!updated) {
+            throw new Error("Listing not found");
+          }
+          return updated;
+        }
+      },
+      removeListing: async ({ artworkId }) => {
+        try {
+          const { error } = await admin.from("artworks").delete().eq("artwork_id", artworkId);
+          if (error) {
+            throw error;
+          }
+          fallbackArtworks = fallbackArtworks.filter((art) => art.artworkId !== artworkId);
+        } catch (error) {
+          console.warn("[supabase] artworks.removeListing falling back:", error instanceof Error ? error.message : error);
+          const next = fallbackArtworks.filter((art) => art.artworkId !== artworkId);
+          if (next.length === fallbackArtworks.length) {
+            throw new Error("Listing not found");
+          }
+          fallbackArtworks = next;
+        }
       }
     },
     orders: {
-      createPaymentIntent: async () => {
-        throw new Error("Orders not yet implemented for Supabase backend.");
+      createPaymentIntent: async ({ artworkId, buyerId }) => {
+        const orderId = generateId();
+        try {
+          const { data: artworkRow, error: artworkError } = await admin
+            .from("artworks")
+            .select("*")
+            .eq("artwork_id", artworkId)
+            .single();
+          if (artworkError || !artworkRow) {
+            throw artworkError ?? new Error("Artwork not found");
+          }
+          const amount = artworkRow.price;
+          const orderPayload: Database["public"]["Tables"]["orders"]["Insert"] = {
+            order_id: orderId,
+            artwork_id: artworkId,
+            buyer_id: buyerId,
+            seller_id: artworkRow.artist_id,
+            amount,
+            currency: artworkRow.currency,
+            status: "pending",
+            stripe_payment_intent_id: `pi_${orderId}`,
+            created_at: new Date().toISOString()
+          };
+          const { data, error } = await admin.from("orders").insert(orderPayload).select("*").single();
+          if (error || !data) {
+            throw error ?? new Error("Unable to create order");
+          }
+          const mapped = mapOrderRow(data);
+          fallbackOrders = [mapped, ...fallbackOrders.filter((order) => order.orderId !== mapped.orderId)];
+          return { clientSecret: `pi_secret_${orderId}`, order: mapped };
+        } catch (error) {
+          console.warn("[supabase] orders.createPaymentIntent falling back:", error);
+          const artwork = fallbackArtworks.find((item) => item.artworkId === artworkId);
+          if (!artwork) {
+            throw new Error("Artwork not found");
+          }
+          const order = {
+            orderId,
+            artworkId,
+            buyerId,
+            sellerId: artwork.artistId,
+            amount: artwork.price,
+            currency: artwork.currency,
+            status: "pending" as const,
+            stripePaymentIntentId: `pi_${orderId}`,
+            createdAt: Date.now()
+          };
+          fallbackOrders = [order, ...fallbackOrders];
+          return { clientSecret: `pi_secret_${orderId}`, order };
+        }
       },
-      confirmPayment: async () => {
-        throw new Error("Orders not yet implemented for Supabase backend.");
+      confirmPayment: async ({ paymentIntentId, status }) => {
+        try {
+          const { data: row, error } = await admin
+            .from("orders")
+            .select("*")
+            .eq("stripe_payment_intent_id", paymentIntentId)
+            .single();
+          if (error || !row) {
+            throw error ?? new Error("Order not found");
+          }
+          const { data: updated, error: updateError } = await admin
+            .from("orders")
+            .update({ status })
+            .eq("order_id", row.order_id)
+            .select("*")
+            .single();
+          if (updateError || !updated) {
+            throw updateError ?? new Error("Unable to update order");
+          }
+          if (status === "paid") {
+            const { data: artworkRow } = await admin
+              .from("artworks")
+              .select("*")
+              .eq("artwork_id", updated.artwork_id)
+              .single();
+            if (artworkRow) {
+              const updatedTags = encodeTagsWithStatus(artworkRow.tags ?? [], "sold");
+              await admin
+                .from("artworks")
+                .update({ is_sold: true, tags: updatedTags })
+                .eq("artwork_id", updated.artwork_id);
+            }
+          }
+          const mapped = mapOrderRow(updated);
+          fallbackOrders = fallbackOrders.map((order) => (order.orderId === mapped.orderId ? mapped : order));
+          return mapped;
+        } catch (error) {
+          console.warn("[supabase] orders.confirmPayment falling back:", error);
+          let updated: Order | undefined;
+          fallbackOrders = fallbackOrders.map((order) => {
+            if (order.stripePaymentIntentId === paymentIntentId) {
+              updated = { ...order, status };
+              return updated;
+            }
+            return order;
+          });
+          if (!updated) {
+            throw new Error("Order not found");
+          }
+          if (status === "paid") {
+            fallbackArtworks = fallbackArtworks.map((artwork) =>
+              artwork.artworkId === updated?.artworkId
+                ? { ...artwork, status: "sold", isSold: true }
+                : artwork
+            );
+          }
+          return updated;
+        }
       }
     },
     events: {
@@ -1074,10 +1376,36 @@ export const createSupabaseBackend = (): BackendAdapter => {
     uploads: {
       createSignedUrl: async ({ extension }) => {
         const assetId = generateId();
-        return {
-          uploadUrl: `https://uploads.spheraconnect.dev/${assetId}.${extension}`,
-          fileUrl: `https://cdn.spheraconnect.dev/${assetId}.${extension}`
-        };
+        const objectPath = `marketplace/${assetId}.${extension}`;
+        try {
+          const { data, error } = await admin.storage
+            .from(SUPABASE_STORAGE_BUCKET)
+            .createSignedUploadUrl(objectPath, 60);
+          if (error || !data) {
+            throw error ?? new Error("Unable to create signed upload URL");
+          }
+          const { data: publicUrl } = admin.storage.from(SUPABASE_STORAGE_BUCKET).getPublicUrl(objectPath);
+          const fileUrl =
+            publicUrl?.publicUrl ??
+            `${SUPABASE_URL}/storage/v1/object/public/${SUPABASE_STORAGE_BUCKET}/${objectPath}`;
+          return {
+            uploadUrl: data.signedUrl,
+            fileUrl,
+            method: "POST" as const,
+            formFields: { token: data.token },
+            fileField: "file"
+          };
+        } catch (error) {
+          console.warn(
+            "[supabase] uploads.createSignedUrl falling back:",
+            error instanceof Error ? error.message : error
+          );
+          const fallback = `https://uploads.spheraconnect.dev/${assetId}.${extension}`;
+          return {
+            uploadUrl: fallback,
+            fileUrl: fallback
+          };
+        }
       }
     }
   };

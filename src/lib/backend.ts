@@ -75,6 +75,8 @@ export interface BackendMessages {
   markRead: (input: { chatId: string; messageId: string; userId: string }) => Promise<void>;
   typing: (input: { chatId: string; userId: string; isTyping: boolean }) => Promise<void>;
   createChat: (input: { memberIds: string[]; isGroup: boolean; title?: string }) => Promise<Chat>;
+  archiveChat: (input: { chatId: string; userId: string; archived: boolean }) => Promise<Chat>;
+  removeChat: (input: { chatId: string; userId: string }) => Promise<void>;
   subscribe: (handler: (event: MessageEvent) => void) => () => void;
 }
 
@@ -82,6 +84,8 @@ export interface BackendMarketplace {
   list: (input: { tag?: string; priceMin?: number; priceMax?: number }) => Promise<Artwork[]>;
   createListing: (input: Artwork) => Promise<Artwork>;
   getDashboard: (userId: string) => Promise<{ listings: Artwork[]; orders: Order[] }>;
+  updateStatus: (input: { artworkId: string; status: Artwork["status"] }) => Promise<Artwork>;
+  removeListing: (input: { artworkId: string }) => Promise<void>;
 }
 
 export interface BackendOrders {
@@ -114,8 +118,17 @@ export interface BackendRewards {
   log: (input: RewardLog) => Promise<RewardLog>;
 }
 
+export type SignedUploadTarget = {
+  uploadUrl: string;
+  fileUrl: string;
+  method?: "PUT" | "POST";
+  headers?: Record<string, string>;
+  formFields?: Record<string, string>;
+  fileField?: string;
+};
+
 export interface BackendUploads {
-  createSignedUrl: (input: { mimeType: string; extension: string }) => Promise<{ uploadUrl: string; fileUrl: string }>;
+  createSignedUrl: (input: { mimeType: string; extension: string }) => Promise<SignedUploadTarget>;
 }
 
 export interface BackendAdapter {

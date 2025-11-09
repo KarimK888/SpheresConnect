@@ -78,6 +78,7 @@ export interface Artwork {
   price: number;
   currency: string;
   isSold: boolean;
+  status: "listed" | "negotiation" | "sold";
   tags: string[];
   createdAt: number;
 }
@@ -144,6 +145,8 @@ export interface Chat {
   isGroup: boolean;
   title?: string;
   createdAt: number;
+  archivedBy: string[];
+  hiddenBy: string[];
 }
 
 export interface Order {
@@ -185,4 +188,6 @@ export type MessageEvent =
   | { type: "reaction:added" | "reaction:removed"; chatId: string; messageId: string; reaction: MessageReaction }
   | { type: "typing"; chatId: string; userId: string; isTyping: boolean; expiresAt: number }
   | { type: "read"; chatId: string; messageId: string; userId: string; readAt: number }
-  | { type: "presence"; chatId: string; userId: string; status: "online" | "offline"; updatedAt: number };
+  | { type: "presence"; chatId: string; userId: string; status: "online" | "offline"; updatedAt: number }
+  | { type: "chat:updated"; chat: Chat }
+  | { type: "chat:removed"; chatId: string };

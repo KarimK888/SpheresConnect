@@ -10,7 +10,9 @@ import {
   type KeyboardEvent,
   type SetStateAction
 } from "react";
+import { useSearchParams } from "next/navigation";
 import {
+  Archive,
   BellOff,
   Calendar,
   CheckCheck,
@@ -18,7 +20,6 @@ import {
   Download,
   Edit3,
   FileText,
-  Menu,
   Mic,
   MoreHorizontal,
   Paperclip,
@@ -50,6 +51,7 @@ import type {
   MessageReaction,
   User
 } from "@/lib/types";
+import { useNotifications } from "@/context/notifications";
 
 const REACTIONS = [
   "\u{1F44D}",
@@ -88,6 +90,7 @@ interface SidebarChat extends Chat {
   unreadCount: number;
   lastMessage?: ChatMessage;
   pinned: boolean;
+  archived: boolean;
 }
 
 const makeLocalId = () => `local_${Math.random().toString(36).slice(2, 10)}`;
@@ -106,9 +109,11 @@ export default function MessagesPage() {
   const { user, isAuthenticated } = useAuth();
   const { t } = useI18n();
   const backend = useMemo(() => getBackend(), []);
+  const searchParams = useSearchParams();
+  const chatParam = searchParams?.get("chat") ?? null;
 
   const [directory, setDirectory] = useState<Directory>({});
-  const [chats, setChats] = useState<SidebarChat[]>([]);
+  const [chats, setChats] = useState<Chat[]>([]);
   const [selectedChatId, setSelectedChatId] = useState<string | null>(null);
   const [messagesByChat, setMessagesByChat] = useState<Record<string, ChatMessage[]>>({});
   const [participantsByChat, setParticipantsByChat] = useState<Record<string, User[]>>({});
@@ -126,6 +131,12 @@ export default function MessagesPage() {
   const [draftPoll, setDraftPoll] = useState<DraftPoll>({ question: "", options: [] });
   const [pinnedChats, setPinnedChats] = useState<string[]>([]);
   const [reactionPickerFor, setReactionPickerFor] = useState<string | null>(null);
+  const [showArchived, setShowArchived] = useState(false);
+  const [chatBusy, setChatBusy] = useState<string | null>(null);
+  const mutedChats = useNotifications((state) => state.mutedChats);
+  const toggleNotificationsForChat = useNotifications((state) => state.toggleChatMute);
+  const markChatNotificationsRead = useNotifications((state) => state.markChatRead);
+  const setActiveNotificationThread = useNotifications((state) => state.setActiveThread);
 
   const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -143,23 +154,38 @@ export default function MessagesPage() {
     void loadDirectory();
   }, [backend]);
 
-  useEffect(() => {
+  const refreshChats = useCallback(async () => {
     if (!user) return;
-    const loadChats = async () => {
-      const raw = await backend.messages.listChats({ userId: user.userId });
-      const enriched = raw.map<SidebarChat>((chat) => ({
-        ...chat,
-        unreadCount: 0,
-        lastMessage: undefined,
-        pinned: pinnedChats.includes(chat.chatId)
-      }));
-      setChats(enriched);
-      if (!selectedChatId && enriched.length) {
-        setSelectedChatId(enriched[0].chatId);
+    const raw = await backend.messages.listChats({ userId: user.userId });
+    setChats(raw);
+  }, [backend.messages, user]);
+
+  useEffect(() => {
+    void refreshChats();
+  }, [refreshChats]);
+
+  useEffect(() => {
+    if (!chats.length) {
+      if (selectedChatId) {
+        setSelectedChatId(null);
       }
-    };
-    void loadChats();
-  }, [backend.messages, pinnedChats, selectedChatId, user]);
+      return;
+    }
+    if (chatParam) {
+      const match = chats.find((chat) => chat.chatId === chatParam);
+      if (match && selectedChatId !== chatParam) {
+        setSelectedChatId(chatParam);
+        return;
+      }
+    }
+    if (!selectedChatId) {
+      setSelectedChatId(chats[0].chatId);
+      return;
+    }
+    if (!chats.some((chat) => chat.chatId === selectedChatId)) {
+      setSelectedChatId(chats[0].chatId);
+    }
+  }, [chatParam, chats, selectedChatId]);
 
   const loadMessages = useCallback(
     async (chatId: string) => {
@@ -258,6 +284,17 @@ export default function MessagesPage() {
           }
         }));
       }
+      if (event.type === "chat:updated") {
+        setChats((prev) => {
+          const exists = prev.some((chat) => chat.chatId === event.chat.chatId);
+          return exists ? prev.map((chat) => (chat.chatId === event.chat.chatId ? event.chat : chat)) : prev;
+        });
+        return;
+      }
+      if (event.type === "chat:removed") {
+        setChats((prev) => prev.filter((chat) => chat.chatId !== event.chatId));
+        setSelectedChatId((current) => (current === event.chatId ? null : current));
+      }
     });
     return unsubscribe;
   }, [backend.messages]);
@@ -321,8 +358,80 @@ export default function MessagesPage() {
     setReactionPickerFor(null);
   };
 
+  useEffect(() => {
+    if (selectedChatId) {
+      setActiveNotificationThread(selectedChatId);
+      markChatNotificationsRead(selectedChatId);
+    } else {
+      setActiveNotificationThread(null);
+    }
+  }, [markChatNotificationsRead, selectedChatId, setActiveNotificationThread]);
+
   const togglePinChat = (chatId: string) => {
     setPinnedChats((prev) => (prev.includes(chatId) ? prev.filter((id) => id !== chatId) : [...prev, chatId]));
+  };
+
+  const handleArchiveChat = async (chatId: string, archived: boolean) => {
+    if (!user) return;
+    setChatBusy(chatId);
+    try {
+      const updated = await backend.messages.archiveChat({ chatId, userId: user.userId, archived });
+      setChats((prev) => {
+        const next = prev.map((chat) =>
+          chat.chatId === chatId ? { ...chat, archivedBy: updated.archivedBy } : chat
+        );
+        if (!showArchived && archived && selectedChatId === chatId) {
+          const fallback = next.find(
+            (chat) => !chat.archivedBy.includes(user.userId) && chat.chatId !== chatId
+          );
+          setSelectedChatId(fallback?.chatId ?? null);
+        }
+        return next;
+      });
+    } finally {
+      setChatBusy(null);
+    }
+  };
+
+  const handleDeleteChat = async (chatId: string) => {
+    if (!user) return;
+    setChatBusy(chatId);
+    try {
+      await backend.messages.removeChat({ chatId, userId: user.userId });
+      setChats((prev) => {
+        const next = prev.filter((chat) => chat.chatId !== chatId);
+        if (selectedChatId === chatId) {
+          setSelectedChatId(next[0]?.chatId ?? null);
+        }
+        return next;
+      });
+      setParticipantsByChat((prev) => {
+        const next = { ...prev };
+        delete next[chatId];
+        return next;
+      });
+      setMessagesByChat((prev) => {
+        const next = { ...prev };
+        delete next[chatId];
+        return next;
+      });
+    } finally {
+      setChatBusy(null);
+    }
+  };
+
+  const handleClearPinned = async () => {
+    if (!user || !selectedChatId || !pinnedMessages.length) return;
+    await Promise.all(
+      pinnedMessages.map((message) =>
+        backend.messages.pin({
+          chatId: selectedChatId,
+          messageId: message.messageId,
+          pinned: false,
+          userId: user.userId
+        })
+      )
+    );
   };
 
   const handleAttachmentInput = (files: FileList | null) => {
@@ -441,7 +550,7 @@ export default function MessagesPage() {
     });
   };
 
-  const visibleChats = useMemo(() => {
+  const visibleChats = useMemo<SidebarChat[]>(() => {
     const normalized = chatSearch.trim().toLowerCase();
     return chats
       .map((chat) => {
@@ -450,14 +559,17 @@ export default function MessagesPage() {
         const unread = user
           ? thread.filter((item) => !item.readBy.includes(user.userId) && item.senderId !== user.userId).length
           : 0;
+        const archived = Boolean(user && chat.archivedBy.includes(user.userId));
         return {
           ...chat,
           unreadCount: unread,
           lastMessage,
-          pinned: pinnedChats.includes(chat.chatId)
+          pinned: pinnedChats.includes(chat.chatId),
+          archived
         };
       })
       .filter((chat) => {
+        if (!showArchived && chat.archived) return false;
         if (!normalized) return true;
         const title =
           chat.title ??
@@ -469,11 +581,12 @@ export default function MessagesPage() {
       .sort((a, b) => {
         if (a.pinned && !b.pinned) return -1;
         if (!a.pinned && b.pinned) return 1;
+        if (a.archived !== b.archived) return a.archived ? 1 : -1;
         const aTime = a.lastMessage?.createdAt ?? 0;
         const bTime = b.lastMessage?.createdAt ?? 0;
         return bTime - aTime;
       });
-  }, [chatSearch, chats, directory, messagesByChat, pinnedChats, user]);
+  }, [chatSearch, chats, directory, messagesByChat, pinnedChats, showArchived, user]);
 
   const filteredMessages = useMemo(() => {
     if (!selectedChatId) return [] as ChatMessage[];
@@ -489,10 +602,10 @@ export default function MessagesPage() {
     });
   }, [messageSearch, messagesByChat, selectedChatId]);
 
-  const pinnedMessages = useMemo(
-    () => filteredMessages.filter((message) => message.pinned && !message.deletedAt),
-    [filteredMessages]
-  );
+  const pinnedMessages = useMemo(() => {
+    if (!selectedChatId) return [] as ChatMessage[];
+    return (messagesByChat[selectedChatId] ?? []).filter((message) => message.pinned && !message.deletedAt);
+  }, [messagesByChat, selectedChatId]);
 
   const typingNames = useMemo(() => {
     if (!selectedChatId) return "";
@@ -523,8 +636,14 @@ export default function MessagesPage() {
       <aside className="flex w-72 flex-shrink-0 flex-col gap-4 rounded-2xl border border-border/60 bg-card/70 p-4">
         <div className="flex items-center justify-between">
           <h2 className="text-xs uppercase tracking-[0.3em] text-muted-foreground">{t("messages_threads")}</h2>
-          <Button variant="ghost" size="icon" onClick={() => setChatSearch("")} className="text-muted-foreground hover:text-white">
-            <Menu className="h-4 w-4" />
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => setShowArchived((value) => !value)}
+            className={cn("hover:text-white", showArchived ? "text-accent" : "text-muted-foreground")}
+            title={showArchived ? t("messages_hide_archived") : t("messages_show_archived")}
+          >
+            <Archive className="h-4 w-4" />
           </Button>
         </div>
         <div className="relative">
@@ -560,24 +679,67 @@ export default function MessagesPage() {
                 onKeyDown={handleKeyPress}
                 className={cn(
                   "w-full rounded-xl border px-4 py-3 text-left text-sm transition-colors",
-                  isActive ? "border-accent bg-accent/10 text-white" : "border-border/40 bg-background/40 hover:border-border"
+                  isActive ? "border-accent bg-accent/10 text-white" : "border-border/40 bg-background/40 hover:border-border",
+                  chat.archived && !isActive ? "opacity-80" : ""
                 )}
               >
-                <div className="flex items-center justify-between">
-                  <span className="font-medium text-white">{title}</span>
-                  <div className="flex items-center gap-2">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="space-y-1">
+                    <span className="font-medium text-white">{title}</span>
+                    {chat.archived && (
+                      <p className="text-[11px] uppercase tracking-widest text-muted-foreground">
+                        {t("messages_archived_badge")}
+                      </p>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-1">
                     {chat.unreadCount > 0 && (
                       <span className="rounded-full bg-accent/80 px-2 py-0.5 text-xs text-white">{chat.unreadCount}</span>
                     )}
                     <button
                       type="button"
-                      className={cn("rounded-full p-1", chat.pinned ? "text-accent" : "text-muted-foreground hover:text-white")}
+                      className={cn(
+                        "rounded-full p-1 transition-colors",
+                        chat.pinned ? "text-accent" : "text-muted-foreground hover:text-white"
+                      )}
                       onClick={(event) => {
                         event.stopPropagation();
                         togglePinChat(chat.chatId);
                       }}
+                      title={chat.pinned ? t("messages_unpin_chat") : t("messages_pin_chat")}
                     >
                       <Pin className="h-3 w-3" />
+                    </button>
+                    <button
+                      type="button"
+                      className={cn(
+                        "rounded-full p-1 transition-colors",
+                        chat.archived ? "text-accent" : "text-muted-foreground hover:text-white",
+                        chatBusy === chat.chatId ? "opacity-50" : ""
+                      )}
+                      disabled={chatBusy === chat.chatId}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        void handleArchiveChat(chat.chatId, !chat.archived);
+                      }}
+                      title={chat.archived ? t("messages_unarchive_chat") : t("messages_archive_chat")}
+                    >
+                      <Archive className="h-3 w-3" />
+                    </button>
+                    <button
+                      type="button"
+                      className={cn(
+                        "rounded-full p-1 text-muted-foreground transition-colors hover:text-white",
+                        chatBusy === chat.chatId ? "opacity-50" : ""
+                      )}
+                      disabled={chatBusy === chat.chatId}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        void handleDeleteChat(chat.chatId);
+                      }}
+                      title={t("messages_delete_chat")}
+                    >
+                      <Trash2 className="h-3 w-3" />
                     </button>
                   </div>
                 </div>
@@ -601,7 +763,7 @@ export default function MessagesPage() {
           className="w-full"
           onClick={async () => {
             const chat = await backend.messages.createChat({ memberIds: [user.userId], isGroup: false });
-            setChats((prev) => [{ ...chat, unreadCount: 0, lastMessage: undefined, pinned: false }, ...prev]);
+            setChats((prev) => [chat, ...prev]);
             setSelectedChatId(chat.chatId);
           }}
         >
@@ -634,8 +796,18 @@ export default function MessagesPage() {
                   </p>
                 </div>
                 <div className="flex items-center gap-2">
-                  <Button variant="ghost" size="icon">
-                    <BellOff className="h-4 w-4" />
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    disabled={!selectedChatId}
+                    onClick={() => selectedChatId && toggleNotificationsForChat(selectedChatId)}
+                  >
+                    <BellOff
+                      className={cn(
+                        "h-4 w-4",
+                        selectedChatId && mutedChats.includes(selectedChatId) ? "text-accent" : ""
+                      )}
+                    />
                   </Button>
                   <Button variant="ghost" size="icon">
                     <Share2 className="h-4 w-4" />
@@ -724,12 +896,13 @@ export default function MessagesPage() {
                   setPollBuilder={setDraftPoll}
                 />
               </div>
-              <RightRail
-                pinnedMessages={pinnedMessages}
-                participants={selectedParticipants}
-                directory={directory}
-                onUnpin={(message) => handlePinMessage(message, false)}
-              />
+        <RightRail
+          pinnedMessages={pinnedMessages}
+          participants={selectedParticipants}
+          directory={directory}
+          onUnpin={(message) => handlePinMessage(message, false)}
+          onClearPinned={handleClearPinned}
+        />
             </div>
           </>
         ) : (
@@ -1198,16 +1371,17 @@ interface RightRailProps {
   participants: User[];
   directory: Directory;
   onUnpin: (message: ChatMessage) => void;
+  onClearPinned: () => void;
 }
 
-function RightRail({ pinnedMessages, participants, directory, onUnpin }: RightRailProps) {
+function RightRail({ pinnedMessages, participants, directory, onUnpin, onClearPinned }: RightRailProps) {
   const { t } = useI18n();
   return (
     <aside className="hidden w-80 flex-shrink-0 flex-col gap-4 rounded-2xl border border-border/60 bg-card/70 p-4 xl:flex">
       <section className="space-y-2">
         <div className="flex items-center justify-between text-xs text-muted-foreground">
           <span>{t("messages_pinned_header")}</span>
-          <button type="button" className="text-white">
+          <button type="button" className="text-white" onClick={onClearPinned} disabled={!pinnedMessages.length}>
             {t("messages_clear_all")}
           </button>
         </div>

@@ -1,12 +1,13 @@
 ﻿"use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { getBackend } from "@/lib/backend";
 import type { Artwork, User } from "@/lib/types";
 import { ProfileClient } from "./ProfileClient";
 import { useI18n } from "@/context/i18n";
 import { useSessionState } from "@/context/session";
+import { Button } from "@/components/ui/button";
 
 interface ProfileState {
   loading: boolean;
@@ -24,6 +25,7 @@ const defaultState: ProfileState = {
 
 export default function ProfilePage() {
   const params = useParams<{ id: string }>();
+  const router = useRouter();
   const paramId = useMemo(() => {
     if (!params) return "";
     const value = params.id;
@@ -31,12 +33,23 @@ export default function ProfilePage() {
   }, [params]);
 
   const sessionUser = useSessionState((state) => state.user);
+  const sessionLoading = useSessionState((state) => state.loading);
   const { t } = useI18n();
   const [state, setState] = useState<ProfileState>({ ...defaultState });
 
   useEffect(() => {
     if (!paramId) {
       setState({ ...defaultState, loading: false, error: "missing_id" });
+      return;
+    }
+
+    if (sessionLoading) {
+      setState((prev) => ({ ...prev, loading: true, error: null }));
+      return;
+    }
+
+    if (!sessionUser) {
+      setState({ ...defaultState, loading: false, error: "unauthenticated" });
       return;
     }
 
@@ -77,7 +90,7 @@ export default function ProfilePage() {
     return () => {
       cancelled = true;
     };
-  }, [paramId, sessionUser]);
+  }, [paramId, sessionUser, sessionLoading]);
 
   if (state.loading) {
     return (
@@ -92,6 +105,17 @@ export default function ProfilePage() {
     return (
       <div className="mx-auto w-full max-w-6xl px-6 py-12 text-sm text-muted-foreground">
         {t("profile_invalid_id")}
+      </div>
+    );
+  }
+
+  if (state.error === "unauthenticated") {
+    return (
+      <div className="mx-auto w-full max-w-6xl space-y-4 px-6 py-12 text-sm text-muted-foreground">
+        <p>{t("profile_login_required")}</p>
+        <Button variant="outline" onClick={() => router.push("/login")}>
+          {t("profile_go_to_login")}
+        </Button>
       </div>
     );
   }

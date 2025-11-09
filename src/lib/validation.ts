@@ -23,6 +23,7 @@ export const ArtworkSchema = z.object({
   price: z.number().min(0),
   currency: z.string().min(3).max(3),
   isSold: z.boolean(),
+  status: z.enum(["listed", "negotiation", "sold"]),
   tags: z.array(z.string()),
   createdAt: z.number()
 });

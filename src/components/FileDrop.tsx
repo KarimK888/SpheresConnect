@@ -4,6 +4,7 @@ import { useCallback, useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { getBackend } from "@/lib/backend";
+import { uploadFileToTarget } from "@/lib/upload-client";
 import { useI18n } from "@/context/i18n";
 
 interface FileDropProps {
@@ -29,21 +30,15 @@ export const FileDrop = ({ onUploaded }: FileDropProps) => {
       setUploading(true);
       try {
         const extension = file.name.split(".").pop() ?? "dat";
-        const { uploadUrl, fileUrl } = await backend.uploads.createSignedUrl({
+        const target = await backend.uploads.createSignedUrl({
           mimeType: file.type || "application/octet-stream",
           extension
         });
-        const response = await fetch(uploadUrl, {
-          method: "PUT",
-          headers: {
-            "Content-Type": file.type || "application/octet-stream"
-          },
-          body: file
-        });
+        const response = await uploadFileToTarget(file, target);
         if (!response.ok) {
           throw new Error("upload_failed");
         }
-        onUploaded(fileUrl);
+        onUploaded(target.fileUrl);
       } catch {
         const dataUrl = await readFileAsDataUrl(file);
         onUploaded(dataUrl);

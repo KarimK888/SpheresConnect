@@ -50,6 +50,8 @@ export type Database = {
           is_group: boolean;
           title: string | null;
           created_at: string;
+          archived_by: string[] | null;
+          hidden_by: string[] | null;
         };
         Insert: {
           chat_id: string;
@@ -57,12 +59,16 @@ export type Database = {
           is_group: boolean;
           title?: string | null;
           created_at?: string;
+          archived_by?: string[] | null;
+          hidden_by?: string[] | null;
         };
         Update: {
           member_ids?: string[];
           is_group?: boolean;
           title?: string | null;
           created_at?: string;
+          archived_by?: string[] | null;
+          hidden_by?: string[] | null;
         };
       };
       hubs: {

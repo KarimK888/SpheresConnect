@@ -30,6 +30,7 @@ export async function POST(request: Request) {
     artistId: payload.artistId ?? "",
     createdAt: payload.createdAt ?? Date.now(),
     isSold: payload.isSold ?? false,
+    status: payload.status ?? (payload.isSold ? "sold" : "listed"),
     currency: payload.currency ?? "usd",
     mediaUrls: payload.mediaUrls ?? [],
     tags: payload.tags ?? []

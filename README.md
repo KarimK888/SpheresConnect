@@ -30,6 +30,7 @@ See `.env.example` for the complete list. At minimum configure:
 - `NEXT_PUBLIC_BACKEND` — choose `fire` or `supabase`
 - `NEXT_PUBLIC_MAPBOX_TOKEN` — Mapbox public token for hub map
 - `NEXT_PUBLIC_SUPABASE_URL` / `NEXT_PUBLIC_SUPABASE_ANON_KEY` / `SUPABASE_SERVICE_ROLE_KEY`
+- `NEXT_PUBLIC_SUPABASE_STORAGE_BUCKET` (optional, defaults to `artwork-media`) for Supabase Storage uploads
 - `STRIPE_SECRET_KEY` and `STRIPE_WEBHOOK_SECRET` — Stripe test keys
 
 Add the Firebase keys (`FIREBASE_*`) only if you plan to wire that provider.
@@ -87,7 +88,7 @@ Sample data lives in `src/lib/sample-data.ts` (users, artworks, hubs, check-ins,
 
 ### Supabase Backend
 
-1. Create a Supabase project and run the SQL in `supabase/migrations/001_create_messaging.sql`.
+1. Create a Supabase project and run the SQL migrations under `supabase/migrations` (apply them in order).
 2. Set `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, and `SUPABASE_SERVICE_ROLE_KEY` in `.env.local`.
 3. Set `NEXT_PUBLIC_BACKEND=supabase` and restart `npm run dev`.
 4. (Optional) Extend the supplied schema/rules for storage, hubs, marketplace, etc.

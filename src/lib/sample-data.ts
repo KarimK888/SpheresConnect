@@ -371,6 +371,7 @@ export const sampleArtworks: Artwork[] = Array.from({ length: 20 }).map((_, inde
   mediaUrls: [`https://placehold.co/600x400?text=Artwork+${index + 1}`],
   price: 15000 + index * 250,
   currency: "usd",
+  status: index % 7 === 0 ? "sold" : index % 5 === 0 ? "negotiation" : "listed",
   isSold: index % 7 === 0,
   tags: ["painting", "studio", index % 2 === 0 ? "featured" : "new"],
   createdAt: now - index * 1000 * 60 * 60 * 24
@@ -419,14 +420,18 @@ export const sampleChats: Chat[] = [
     memberIds: ["usr_alina", "usr_bastien"],
     isGroup: false,
     createdAt: now - 1000 * 60 * 60 * 24 * 5,
-    title: undefined
+    title: undefined,
+    archivedBy: [],
+    hiddenBy: []
   },
   {
     chatId: "chat_installation",
     memberIds: ["usr_elio", "usr_fatima", "usr_jamal"],
     isGroup: true,
     title: "Installation Collab",
-    createdAt: now - 1000 * 60 * 60 * 24 * 2
+    createdAt: now - 1000 * 60 * 60 * 24 * 2,
+    archivedBy: [],
+    hiddenBy: []
   }
 ];
 

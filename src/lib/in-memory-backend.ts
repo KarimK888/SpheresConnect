@@ -66,6 +66,49 @@ const stores: Record<"firebase" | "supabase", InMemoryStore> = {
   }
 };
 
+const STORAGE_KEY_PREFIX = "spheraconnect:artworks";
+const hydratedProviders = new Set<"firebase" | "supabase">();
+
+const canUseLocalStorage = (): boolean =>
+  typeof window !== "undefined" && typeof window.localStorage !== "undefined";
+
+const getStorageKey = (provider: "firebase" | "supabase") =>
+  `${STORAGE_KEY_PREFIX}:${provider}`;
+
+const hydrateArtworksFromStorage = (provider: "firebase" | "supabase") => {
+  if (!canUseLocalStorage()) return;
+  try {
+    const stored = window.localStorage.getItem(getStorageKey(provider));
+    if (!stored) return;
+    const parsed = JSON.parse(stored) as unknown;
+    if (!Array.isArray(parsed)) return;
+    const merged = new Map<string, Artwork>();
+    stores[provider].artworks.forEach((art) => merged.set(art.artworkId, art));
+    (parsed as Artwork[]).forEach((art) => {
+      if (art?.artworkId) {
+        merged.set(art.artworkId, art);
+      }
+    });
+    stores[provider].artworks = Array.from(merged.values()).sort(
+      (a, b) => b.createdAt - a.createdAt
+    );
+  } catch (error) {
+    console.warn("[in-memory-backend] Unable to hydrate artworks:", error);
+  }
+};
+
+const persistArtworksToStorage = (provider: "firebase" | "supabase") => {
+  if (!canUseLocalStorage()) return;
+  try {
+    window.localStorage.setItem(
+      getStorageKey(provider),
+      JSON.stringify(stores[provider].artworks)
+    );
+  } catch (error) {
+    console.warn("[in-memory-backend] Unable to persist artworks:", error);
+  }
+};
+
 const randomId = (prefix: string) => `${prefix}_${Math.random().toString(36).slice(2, 10)}`;
 
 const messageListeners: Record<"firebase" | "supabase", Set<(event: MessageEvent) => void>> = {
@@ -145,6 +188,15 @@ const ensureUser = (store: InMemoryStore, userId: string) => {
 
 export const createInMemoryBackend = (provider: "firebase" | "supabase"): BackendAdapter => {
   const store = stores[provider];
+  store.chats = store.chats.map((chat) => ({
+    ...chat,
+    archivedBy: chat.archivedBy ?? [],
+    hiddenBy: chat.hiddenBy ?? []
+  }));
+  if (!hydratedProviders.has(provider)) {
+    hydrateArtworksFromStorage(provider);
+    hydratedProviders.add(provider);
+  }
   const listeners = messageListeners[provider];
   const emit = (event: MessageEvent) => {
     listeners.forEach((listener) => listener(event));
@@ -273,7 +325,10 @@ export const createInMemoryBackend = (provider: "firebase" | "supabase"): Backen
       }
     },
     messages: {
-      listChats: async ({ userId }) => store.chats.filter((chat) => chat.memberIds.includes(userId)),
+      listChats: async ({ userId }) =>
+        store.chats
+          .filter((chat) => chat.memberIds.includes(userId))
+          .filter((chat) => !chat.hiddenBy.includes(userId)),
       list: async ({ chatId }) => {
         const nowTs = Date.now();
         return store.messages
@@ -432,10 +487,58 @@ export const createInMemoryBackend = (provider: "firebase" | "supabase"): Backen
           memberIds,
           isGroup,
           title,
-          createdAt: Date.now()
+          createdAt: Date.now(),
+          archivedBy: [],
+          hiddenBy: []
         };
         store.chats.push(chat);
         return chat;
+      },
+      archiveChat: async ({ chatId, userId, archived }) => {
+        ensureUser(store, userId);
+        const index = store.chats.findIndex((chat) => chat.chatId === chatId);
+        if (index < 0) {
+          throw new Error("Chat not found");
+        }
+        const chat = store.chats[index];
+        if (!chat.memberIds.includes(userId)) {
+          throw new Error("User not part of chat");
+        }
+        const archiveSet = new Set(chat.archivedBy);
+        if (archived) {
+          archiveSet.add(userId);
+        } else {
+          archiveSet.delete(userId);
+        }
+        const updated: Chat = { ...chat, archivedBy: Array.from(archiveSet) };
+        store.chats[index] = updated;
+        emit({ type: "chat:updated", chat: updated });
+        return updated;
+      },
+      removeChat: async ({ chatId, userId }) => {
+        ensureUser(store, userId);
+        const index = store.chats.findIndex((chat) => chat.chatId === chatId);
+        if (index < 0) {
+          throw new Error("Chat not found");
+        }
+        const chat = store.chats[index];
+        if (!chat.memberIds.includes(userId)) {
+          throw new Error("User not part of chat");
+        }
+        if (chat.hiddenBy.includes(userId)) {
+          return;
+        }
+        const hiddenBy = [...chat.hiddenBy, userId];
+        const allHidden = chat.memberIds.every((id) => hiddenBy.includes(id));
+        if (allHidden) {
+          store.chats.splice(index, 1);
+          store.messages = store.messages.filter((message) => message.chatId !== chatId);
+          emit({ type: "chat:removed", chatId });
+          return;
+        }
+        const updated: Chat = { ...chat, hiddenBy };
+        store.chats[index] = updated;
+        emit({ type: "chat:updated", chat: updated });
       },
       subscribe: (handler) => {
         const listeners = messageListeners[provider];
@@ -455,19 +558,46 @@ export const createInMemoryBackend = (provider: "firebase" | "supabase"): Backen
         });
       },
       createListing: async (input) => {
+        const resolvedStatus = input.status ?? (input.isSold ? "sold" : "listed");
         const listing: Artwork = {
           ...input,
           artworkId: input.artworkId ?? randomId("art"),
           createdAt: input.createdAt ?? Date.now(),
-          isSold: input.isSold ?? false
+          status: resolvedStatus,
+          isSold: resolvedStatus === "sold"
         };
         store.artworks.push(listing);
+        persistArtworksToStorage(provider);
         return listing;
       },
       getDashboard: async (userId) => {
         const listings = store.artworks.filter((art) => art.artistId === userId);
         const orders = store.orders.filter((order) => order.sellerId === userId);
         return { listings, orders };
+      },
+      updateStatus: async ({ artworkId, status }) => {
+        const nextStatus: Artwork["status"] = status;
+        let updated: Artwork | undefined;
+        store.artworks = store.artworks.map((art) => {
+          if (art.artworkId === artworkId) {
+            updated = {
+              ...art,
+              status: nextStatus,
+              isSold: nextStatus === "sold"
+            };
+            return updated;
+          }
+          return art;
+        });
+        if (!updated) {
+          throw new Error("Listing not found");
+        }
+        persistArtworksToStorage(provider);
+        return updated;
+      },
+      removeListing: async ({ artworkId }) => {
+        store.artworks = store.artworks.filter((art) => art.artworkId !== artworkId);
+        persistArtworksToStorage(provider);
       }
     },
     orders: {
@@ -502,8 +632,11 @@ export const createInMemoryBackend = (provider: "firebase" | "supabase"): Backen
         store.orders = store.orders.map((o) => (o.orderId === updated.orderId ? updated : o));
         if (status === "paid") {
           store.artworks = store.artworks.map((art) =>
-            art.artworkId === updated.artworkId ? { ...art, isSold: true } : art
+            art.artworkId === updated.artworkId
+              ? { ...art, isSold: true, status: "sold" }
+              : art
           );
+          persistArtworksToStorage(provider);
         }
         return updated;
       }
