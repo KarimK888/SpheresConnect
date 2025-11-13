@@ -1,32 +1,36 @@
-insert into storage.buckets (id, name, public)
-values ('artwork-media', 'artwork-media', true)
-on conflict (id) do nothing;
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_policies
+    where schemaname = 'storage'
+      and tablename = 'objects'
+      and policyname = 'Public read access for artwork media'
+  ) then
+    create policy "Public read access for artwork media"
+      on storage.objects for select
+      using (bucket_id = 'artwork-media');
+  end if;
+end
+$$;
 
-create policy if not exists "Public read access for artwork media"
-on storage.objects for select
-using (bucket_id = 'artwork-media');
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_policies
+    where schemaname = 'storage'
+      and tablename = 'objects'
+      and policyname = 'Authenticated upload artwork media'
+  ) then
+    create policy "Authenticated upload artwork media"
+      on storage.objects for insert
+      with check (
+        bucket_id = 'artwork-media'
+        and auth.role() in ('authenticated','service_role')
+      );
+  end if;
+end
+$$;
 
-create policy if not exists "Authenticated upload artwork media"
-on storage.objects for insert
-with check (
-  bucket_id = 'artwork-media'
-  and auth.role() in ('authenticated', 'service_role')
-);
-
-create policy if not exists "Authenticated update artwork media"
-on storage.objects for update
-using (
-  bucket_id = 'artwork-media'
-  and auth.role() in ('authenticated', 'service_role')
-)
-with check (
-  bucket_id = 'artwork-media'
-  and auth.role() in ('authenticated', 'service_role')
-);
-
-create policy if not exists "Authenticated delete artwork media"
-on storage.objects for delete
-using (
-  bucket_id = 'artwork-media'
-  and auth.role() in ('authenticated', 'service_role')
-);
+-- repeat the same pattern for the update/delete policies

@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Bell, BellOff } from "lucide-react";
-import { useNotifications } from "@/context/notifications";
+import { useNotifications, NOTIFICATION_HISTORY_WINDOW_MS } from "@/context/notifications";
 import { useI18n } from "@/context/i18n";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -27,7 +27,10 @@ export const NotificationBell = () => {
   const markChatRead = useNotifications((state) => state.markChatRead);
   const setActiveThread = useNotifications((state) => state.setActiveThread);
 
-  const recentItems = useMemo(() => items.slice(0, 10), [items]);
+  const recentItems = useMemo(() => {
+    const cutoff = Date.now() - NOTIFICATION_HISTORY_WINDOW_MS;
+    return items.filter((item) => item.createdAt >= cutoff).slice(0, 50);
+  }, [items]);
 
   useEffect(() => {
     if (!open) return;
@@ -79,7 +82,7 @@ export const NotificationBell = () => {
             {recentItems.length ? (
               recentItems.map((item) => {
                 const chatMuted = item.chatId ? mutedChats.includes(item.chatId) : false;
-                const handleNavigate = () => {
+                const navigateToChat = () => {
                   markRead(item.id);
                   if (item.chatId) {
                     markChatRead(item.chatId);
@@ -88,17 +91,28 @@ export const NotificationBell = () => {
                   }
                   setOpen(false);
                 };
+                const openLink = (href: string, isChatLink?: boolean) => {
+                  markRead(item.id);
+                  if (isChatLink && item.chatId) {
+                    markChatRead(item.chatId);
+                    setActiveThread(item.chatId);
+                  }
+                  router.push(href);
+                  setOpen(false);
+                };
                 return (
                   <div
                     key={item.id}
                     className={cn(
                       "space-y-1 rounded-xl border border-border/50 bg-background/60 p-3 text-sm",
                       !item.read && "border-accent/60 bg-accent/10",
-                      item.chatId && "cursor-pointer hover:border-accent/80"
+                      (item.chatId || item.link) && "cursor-pointer hover:border-accent/80"
                     )}
                     onClick={() => {
                       if (item.chatId) {
-                        handleNavigate();
+                        navigateToChat();
+                      } else if (item.link) {
+                        openLink(item.link, false);
                       }
                     }}
                   >
@@ -120,6 +134,34 @@ export const NotificationBell = () => {
                         {chatMuted ? t("notifications_unmute_thread") : t("notifications_mute_thread")}
                       </Button>
                     )}
+                    <div className="flex flex-wrap gap-2">
+                      {item.link && (
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          className="h-7 px-3 text-[11px]"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            openLink(item.link, !!item.chatId);
+                          }}
+                        >
+                          {item.linkLabel ?? t("notifications_open_link")}
+                        </Button>
+                      )}
+                      {item.secondaryLink && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="h-7 px-3 text-[11px]"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            openLink(item.secondaryLink);
+                          }}
+                        >
+                          {item.secondaryLinkLabel ?? t("notifications_view_profile")}
+                        </Button>
+                      )}
+                    </div>
                   </div>
                 );
               })

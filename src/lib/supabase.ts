@@ -5,6 +5,9 @@ import type {
   Chat,
   Hub,
   ChatMessage,
+  MatchAction,
+  MatchActionResult,
+  MatchLikeAlert,
   MatchSuggestion,
   MessageEvent,
   MessageReaction,
@@ -12,7 +15,17 @@ import type {
   Artwork,
   Order,
   Event,
-  Checkin
+  Checkin,
+  RewardLog,
+  ProfileProject,
+  ProfileMedia,
+  ProfileSocialLink,
+  OrderMilestone,
+  Payout,
+  NotificationEntry,
+  VerificationRequest,
+  ModerationQueueItem,
+  SupportTicket
 } from "./types";
 import {
   sampleHubs,
@@ -20,23 +33,50 @@ import {
   sampleOrders,
   sampleEvents,
   sampleUsers,
-  sampleCheckins
+  sampleCheckins,
+  sampleRewardLogs,
+  sampleMatchActions
 } from "./sample-data";
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 const isServerRuntime = typeof window === "undefined";
-let SUPABASE_SERVICE_ROLE_KEY: string | null = null;
-if (isServerRuntime) {
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires, global-require
-    SUPABASE_SERVICE_ROLE_KEY = require("./supabase-env.server").getSupabaseServiceRoleKey();
-  } catch (error) {
-    console.warn("[supabase] Unable to resolve service role key on server:", error);
-    SUPABASE_SERVICE_ROLE_KEY = null;
-  }
-}
+const isClientRuntime = !isServerRuntime;
+const SUPABASE_SERVICE_ROLE_KEY: string | null = isServerRuntime
+  ? process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.SUPABASE_SERVICE_ROLE ?? null
+  : null;
 const SUPABASE_STORAGE_BUCKET = process.env.NEXT_PUBLIC_SUPABASE_STORAGE_BUCKET ?? "artwork-media";
+
+const buildQueryString = (params: Record<string, string | number | undefined>) => {
+  const search = new URLSearchParams();
+  Object.entries(params).forEach(([key, value]) => {
+    if (value === undefined || value === null || value === "") {
+      return;
+    }
+    search.set(key, String(value));
+  });
+  const query = search.toString();
+  return query ? `?${query}` : "";
+};
+
+const fetchFromApi = async <T>(path: string, init?: RequestInit) => {
+  if (!isClientRuntime) {
+    throw new Error("fetchFromApi is only available in the browser runtime.");
+  }
+  const response = await fetch(path, {
+    cache: "no-store",
+    ...init,
+    headers: {
+      Accept: "application/json",
+      ...(init?.headers ?? {})
+    }
+  });
+  if (!response.ok) {
+    const message = await response.text().catch(() => response.statusText);
+    throw new Error(message || `Request failed with status ${response.status}`);
+  }
+  return (await response.json()) as T;
+};
 
 if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
   console.warn(
@@ -59,12 +99,12 @@ const ensureSupabaseClients = () => {
     detectSessionInUrl: true
   } as const;
 
-  const anon = createClient<Database>(SUPABASE_URL, SUPABASE_ANON_KEY, {
+  const anon = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
     auth: authOptions
   });
   const admin =
     SUPABASE_SERVICE_ROLE_KEY && isServerRuntime
-      ? createClient<Database>(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
+      ? createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
           auth: authOptions
         })
       : anon;
@@ -80,6 +120,25 @@ let fallbackEvents = [...sampleEvents];
 let fallbackCheckins = [...sampleCheckins];
 let fallbackArtworks = [...sampleArtworks];
 let fallbackOrders = [...sampleOrders];
+let fallbackRewards = [...sampleRewardLogs];
+let fallbackMatchActions = [...sampleMatchActions];
+let fallbackProfileProjects: ProfileProject[] = [];
+let fallbackProfileMedia: ProfileMedia[] = [];
+let fallbackProfileSocials: ProfileSocialLink[] = [];
+let fallbackOrderMilestones: OrderMilestone[] = [];
+let fallbackPayouts: Payout[] = [];
+let fallbackNotifications: NotificationEntry[] = [];
+let fallbackVerificationRequests: VerificationRequest[] = [];
+let fallbackModerationQueue: ModerationQueueItem[] = [];
+let fallbackSupportTickets: SupportTicket[] = [];
+const LIKE_HISTORY_WINDOW_MS = 1000 * 60 * 60 * 24 * 3;
+const mergeById = <T>(collection: T[], updates: T[], getId: (item: T) => string): T[] => {
+  if (!updates.length) {
+    return collection;
+  }
+  const identifiers = new Set(updates.map(getId));
+  return [...collection.filter((item) => !identifiers.has(getId(item))), ...updates];
+};
 
 const CHECKIN_TTL_MS = 1000 * 60 * 60 * 4;
 const STATUS_TAG_PREFIX = "__status:";
@@ -103,6 +162,324 @@ const encodeTagsWithStatus = (tags: string[], status: Artwork["status"]) => {
   const base = tags.filter((tag) => !tag.startsWith(STATUS_TAG_PREFIX));
   return [...base, `${STATUS_TAG_PREFIX}${status}`];
 };
+
+const getRewardSummaryForUser = (userId: string) => {
+  const logs = fallbackRewards
+    .filter((log) => log.userId === userId)
+    .sort((a, b) => b.createdAt - a.createdAt);
+  const total = logs.reduce((sum, log) => sum + log.points, 0);
+  return { total, logs };
+};
+
+const getFallbackUser = (userId: string) => sampleUsers.find((user) => user.userId === userId) ?? null;
+
+const fetchUserById = async (userId: string): Promise<User | null> => {
+  if (!userId) return null;
+  if (!clients) {
+    return getFallbackUser(userId);
+  }
+  try {
+    const { admin } = clients;
+    const { data, error } = await admin.from("users").select("*").eq("user_id", userId).maybeSingle();
+    if (error) throw error;
+    if (!data) {
+      return getFallbackUser(userId);
+    }
+    return mapUserRow(data);
+  } catch (error) {
+    console.warn("[supabase] fetchUserById fallback:", error instanceof Error ? error.message : error);
+    return getFallbackUser(userId);
+  }
+};
+
+const mapMatchActionRow = (row: Database["public"]["Tables"]["match_actions"]["Row"]): MatchAction => ({
+  id: row.id,
+  userId: row.user_id,
+  targetId: row.target_id,
+  action: (row.action as MatchAction["action"]) ?? "connected",
+  createdAt: row.created_at ? new Date(row.created_at).getTime() : Date.now()
+});
+
+const getFallbackMatchHistory = (userId: string) =>
+  fallbackMatchActions.filter((entry) => entry.userId === userId).sort((a, b) => b.createdAt - a.createdAt);
+
+const upsertFallbackMatchAction = (entry: MatchAction) => {
+  fallbackMatchActions = [
+    entry,
+    ...fallbackMatchActions.filter((current) => current.userId !== entry.userId || current.targetId !== entry.targetId)
+  ];
+};
+
+const getFallbackIncomingLikes = (userId: string): MatchLikeAlert[] =>
+  fallbackMatchActions
+    .filter((entry) => entry.targetId === userId && entry.action === "connected")
+    .sort((a, b) => b.createdAt - a.createdAt)
+    .map((entry) => {
+      const from = getFallbackUser(entry.userId) ?? sampleUsers[0];
+      const isMutual = fallbackMatchActions.some(
+        (candidate) =>
+          candidate.userId === userId && candidate.targetId === entry.userId && candidate.action === "connected"
+      );
+      return { action: entry, from, isMutual };
+    });
+
+const mapProfileProjectRow = (row: Database["public"]["Tables"]["profile_projects"]["Row"]): ProfileProject => ({
+  projectId: row.project_id,
+  userId: row.user_id,
+  title: row.title,
+  summary: row.summary ?? undefined,
+  link: row.link ?? undefined,
+  status: (row.status as ProfileProject["status"]) ?? undefined,
+  tags: row.tags ?? [],
+  year: row.year ?? undefined,
+  createdAt: row.created_at ? new Date(row.created_at).getTime() : Date.now()
+});
+
+const mapProfileMediaRow = (row: Database["public"]["Tables"]["profile_media"]["Row"]): ProfileMedia => ({
+  mediaId: row.media_id,
+  userId: row.user_id,
+  projectId: row.project_id ?? undefined,
+  type: row.type as ProfileMedia["type"],
+  title: row.title ?? undefined,
+  description: row.description ?? undefined,
+  url: row.url,
+  thumbnailUrl: row.thumbnail_url ?? undefined,
+  tags: row.tags ?? [],
+  createdAt: row.created_at ? new Date(row.created_at).getTime() : Date.now()
+});
+
+const mapProfileSocialRow = (row: Database["public"]["Tables"]["profile_socials"]["Row"]): ProfileSocialLink => ({
+  socialId: row.social_id,
+  userId: row.user_id,
+  platform: row.platform,
+  handle: row.handle ?? undefined,
+  url: row.url ?? undefined,
+  createdAt: row.created_at ? new Date(row.created_at).getTime() : Date.now()
+});
+
+const mapOrderMilestoneRow = (row: Database["public"]["Tables"]["order_milestones"]["Row"]): OrderMilestone => ({
+  milestoneId: row.milestone_id,
+  orderId: row.order_id,
+  title: row.title,
+  amount: Number(row.amount ?? 0),
+  dueDate: row.due_date ? new Date(row.due_date).getTime() : undefined,
+  status: (row.status as OrderMilestone["status"]) ?? "pending",
+  createdAt: row.created_at ? new Date(row.created_at).getTime() : Date.now(),
+  updatedAt: row.updated_at ? new Date(row.updated_at).getTime() : undefined
+});
+
+const mapPayoutRow = (row: Database["public"]["Tables"]["payouts"]["Row"]): Payout => ({
+  payoutId: row.payout_id,
+  orderId: row.order_id,
+  milestoneId: row.milestone_id ?? undefined,
+  payeeId: row.payee_id,
+  amount: Number(row.amount ?? 0),
+  currency: row.currency ?? "usd",
+  status: (row.status as Payout["status"]) ?? "initiated",
+  metadata: (row.metadata as Record<string, unknown>) ?? undefined,
+  createdAt: row.created_at ? new Date(row.created_at).getTime() : Date.now()
+});
+
+const mapNotificationRow = (row: Database["public"]["Tables"]["notifications"]["Row"]): NotificationEntry => ({
+  notificationId: row.notification_id,
+  userId: row.user_id,
+  kind: row.kind ?? "system",
+  title: row.title,
+  body: row.body ?? undefined,
+  link: row.link ?? undefined,
+  linkLabel: row.link_label ?? undefined,
+  secondaryLink: row.secondary_link ?? undefined,
+  secondaryLinkLabel: row.secondary_link_label ?? undefined,
+  metadata: (row.metadata as Record<string, unknown>) ?? undefined,
+  createdAt: row.created_at ? new Date(row.created_at).getTime() : Date.now(),
+  readAt: row.read_at ? new Date(row.read_at).getTime() : undefined
+});
+
+const mapVerificationRequestRow = (
+  row: Database["public"]["Tables"]["verification_requests"]["Row"]
+): VerificationRequest => ({
+  requestId: row.request_id,
+  userId: row.user_id,
+  portfolioUrl: row.portfolio_url ?? undefined,
+  statement: row.statement ?? undefined,
+  status: row.status ?? "pending",
+  reviewerId: row.reviewer_id ?? undefined,
+  reviewedAt: row.reviewed_at ? new Date(row.reviewed_at).getTime() : undefined,
+  notes: row.notes ?? undefined,
+  createdAt: row.created_at ? new Date(row.created_at).getTime() : Date.now()
+});
+
+const mapModerationQueueRow = (
+  row: Database["public"]["Tables"]["moderation_queue"]["Row"]
+): ModerationQueueItem => ({
+  queueId: row.queue_id,
+  resourceType: row.resource_type,
+  resourceId: row.resource_id,
+  reportedBy: row.reported_by ?? undefined,
+  reason: row.reason ?? undefined,
+  status: row.status ?? "open",
+  reviewerId: row.reviewer_id ?? undefined,
+  reviewedAt: row.reviewed_at ? new Date(row.reviewed_at).getTime() : undefined,
+  resolution: row.resolution ?? undefined,
+  createdAt: row.created_at ? new Date(row.created_at).getTime() : Date.now()
+});
+
+const mapSupportTicketRow = (row: Database["public"]["Tables"]["support_tickets"]["Row"]): SupportTicket => ({
+  ticketId: row.ticket_id,
+  userId: row.user_id ?? undefined,
+  subject: row.subject,
+  body: row.body ?? undefined,
+  status: row.status ?? "open",
+  assignedTo: row.assigned_to ?? undefined,
+  createdAt: row.created_at ? new Date(row.created_at).getTime() : Date.now(),
+  updatedAt: row.updated_at ? new Date(row.updated_at).getTime() : undefined
+});
+
+const loadMatchHistory = async (userId: string): Promise<MatchAction[]> => {
+  if (!userId) return [];
+  if (isClientRuntime) {
+    try {
+      const response = await fetchFromApi<{ items: MatchAction[] }>(
+        `/api/match/actions${buildQueryString({ userId, direction: "outgoing" })}`
+      );
+      if (Array.isArray(response.items)) {
+        return response.items;
+      }
+    } catch (error) {
+      console.warn("[supabase] matches.history api fallback:", error instanceof Error ? error.message : error);
+    }
+    return getFallbackMatchHistory(userId);
+  }
+  if (!clients) {
+    return getFallbackMatchHistory(userId);
+  }
+  try {
+    const { admin } = clients;
+    const { data, error } = await admin
+      .from("match_actions")
+      .select("*")
+      .eq("user_id", userId)
+      .order("created_at", { ascending: false });
+    if (error) throw error;
+    const mapped = (data ?? []).map(mapMatchActionRow);
+    fallbackMatchActions = [
+      ...fallbackMatchActions.filter((entry) => entry.userId !== userId),
+      ...mapped
+    ];
+    return mapped;
+  } catch (error) {
+    console.warn("[supabase] matches.history fallback:", error instanceof Error ? error.message : error);
+    return getFallbackMatchHistory(userId);
+  }
+};
+
+const ensureDirectChat = async (memberA: string, memberB: string): Promise<string | null> => {
+  if (!clients) return null;
+  const { admin } = clients;
+  const members = [memberA, memberB];
+  try {
+    const { data } = await admin
+      .from("chats")
+      .select("*")
+      .contains("member_ids", members)
+      .eq("is_group", false)
+      .limit(1)
+      .maybeSingle();
+    if (data) {
+      return mapChatRow(data).chatId;
+    }
+    const chatId = generateId();
+    const { data: inserted, error: insertError } = await admin
+      .from("chats")
+      .insert({
+        chat_id: chatId,
+        member_ids: members,
+        is_group: false,
+        title: null,
+        created_at: new Date().toISOString(),
+        archived_by: [],
+        hidden_by: []
+      })
+      .select("*")
+      .single();
+    if (insertError || !inserted) {
+      throw insertError ?? new Error("Unable to create chat");
+    }
+    return mapChatRow(inserted).chatId;
+  } catch (error) {
+    console.warn("[supabase] ensureDirectChat failed:", error instanceof Error ? error.message : error);
+    return null;
+  }
+};
+
+const loadIncomingLikes = async (userId: string): Promise<MatchLikeAlert[]> => {
+  if (!userId) return [];
+  if (isClientRuntime) {
+    try {
+      const response = await fetchFromApi<{ items: MatchLikeAlert[] }>(
+        `/api/match/actions${buildQueryString({ direction: "incoming" })}`
+      );
+      if (Array.isArray(response.items)) {
+        return response.items;
+      }
+    } catch (error) {
+      console.warn("[supabase] matches.incomingLikes api fallback:", error instanceof Error ? error.message : error);
+    }
+    return getFallbackIncomingLikes(userId).filter(
+      (entry) => entry.action.createdAt >= Date.now() - LIKE_HISTORY_WINDOW_MS
+    );
+  }
+  if (!clients) {
+    return getFallbackIncomingLikes(userId);
+  }
+  try {
+    const { admin } = clients;
+    const { data, error } = await admin
+      .from("match_actions")
+      .select("*, liker:users!match_actions_user_id_fkey (*)")
+      .eq("target_id", userId)
+      .eq("action", "connected")
+      .order("created_at", { ascending: false });
+    if (error) throw error;
+    type MatchActionRowWithLiker = Database["public"]["Tables"]["match_actions"]["Row"] & {
+      liker?: Database["public"]["Tables"]["users"]["Row"] | null;
+    };
+    const mappedRows: MatchActionRowWithLiker[] = data ?? [];
+    const mapped = mappedRows.map(mapMatchActionRow);
+    const { data: outgoingRows, error: outgoingError } = await admin
+      .from("match_actions")
+      .select("target_id")
+      .eq("user_id", userId)
+      .eq("action", "connected");
+    if (outgoingError) {
+      console.warn("[supabase] matches.incomingLikes outgoing fallback:", outgoingError.message);
+    }
+    const likedTargets = new Set((outgoingRows ?? []).map((row) => row.target_id));
+    const alerts: MatchLikeAlert[] = [];
+    for (let index = 0; index < mapped.length; index += 1) {
+      const action = mapped[index];
+      const likerRow = mappedRows[index]?.liker ?? null;
+      const likerUser =
+        likerRow && "user_id" in likerRow
+          ? mapUserRow(likerRow as Database["public"]["Tables"]["users"]["Row"])
+          : (await fetchUserById(action.userId)) ?? (getFallbackUser(action.userId) ?? sampleUsers[0]);
+      const isMutual = likedTargets.has(action.userId);
+      let chatId: string | undefined;
+      if (isMutual) {
+        const ensured = await ensureDirectChat(action.userId, userId);
+        if (ensured) {
+          chatId = ensured;
+        }
+      }
+      alerts.push({ action, from: likerUser, isMutual, chatId });
+    }
+    return alerts;
+  } catch (error) {
+    console.warn("[supabase] matches.incomingLikes fallback:", error instanceof Error ? error.message : error);
+    return getFallbackIncomingLikes(userId);
+  }
+};
+
 
 const cleanupFallbackCheckins = () => {
   const now = Date.now();
@@ -456,6 +833,140 @@ export const createSupabaseBackend = (): BackendAdapter => {
     }));
   };
 
+  const createNotificationEntry = async (
+    input: Omit<NotificationEntry, "notificationId" | "createdAt" | "readAt"> & {
+      notificationId?: string;
+      createdAt?: number;
+      readAt?: number | null;
+    }
+  ): Promise<NotificationEntry> => {
+    const entry: NotificationEntry = {
+      notificationId: input.notificationId ?? generateId(),
+      userId: input.userId,
+      kind: input.kind ?? "system",
+      title: input.title,
+      body: input.body ?? undefined,
+      link: input.link ?? undefined,
+      linkLabel: input.linkLabel ?? undefined,
+      secondaryLink: input.secondaryLink ?? undefined,
+      secondaryLinkLabel: input.secondaryLinkLabel ?? undefined,
+      metadata: input.metadata,
+      createdAt: input.createdAt ?? Date.now(),
+      readAt: input.readAt ?? null
+    };
+    if (!clients) {
+      fallbackNotifications = mergeById(fallbackNotifications, [entry], (item) => item.notificationId);
+      return entry;
+    }
+    try {
+      const { data, error } = await admin
+        .from("notifications")
+        .insert({
+          notification_id: entry.notificationId,
+          user_id: entry.userId,
+          kind: entry.kind,
+          title: entry.title,
+          body: entry.body ?? null,
+          link: entry.link ?? null,
+          link_label: entry.linkLabel ?? null,
+          secondary_link: entry.secondaryLink ?? null,
+          secondary_link_label: entry.secondaryLinkLabel ?? null,
+          metadata: entry.metadata ?? null,
+          created_at: new Date(entry.createdAt).toISOString(),
+          read_at: entry.readAt ? new Date(entry.readAt).toISOString() : null
+        })
+        .select("*")
+        .single();
+      if (error || !data) {
+        throw error ?? new Error("Unable to create notification");
+      }
+      const mapped = mapNotificationRow(data);
+      fallbackNotifications = mergeById(fallbackNotifications, [mapped], (item) => item.notificationId);
+      return mapped;
+    } catch (error) {
+      console.warn("[supabase] notifications.create fallback:", error instanceof Error ? error.message : error);
+      fallbackNotifications = mergeById(fallbackNotifications, [entry], (item) => item.notificationId);
+      return entry;
+    }
+  };
+
+  const listNotificationEntries = async ({
+    userId,
+    since,
+    limit = 100
+  }: {
+    userId: string;
+    since?: number;
+    limit?: number;
+  }): Promise<NotificationEntry[]> => {
+    if (!userId) return [];
+    const readFallback = () =>
+      [...fallbackNotifications]
+        .filter((entry) => entry.userId === userId && (since ? entry.createdAt >= since : true))
+        .sort((a, b) => b.createdAt - a.createdAt)
+        .slice(0, limit);
+    if (!clients) {
+      return readFallback();
+    }
+    try {
+      let query = admin
+        .from("notifications")
+        .select("*")
+        .eq("user_id", userId)
+        .order("created_at", { ascending: false })
+        .limit(limit);
+      if (since) {
+        query = query.gte("created_at", new Date(since).toISOString());
+      }
+      const { data, error } = await query;
+      if (error) throw error;
+      const mapped = (data ?? []).map(mapNotificationRow);
+      fallbackNotifications = mergeById(fallbackNotifications, mapped, (item) => item.notificationId);
+      return mapped;
+    } catch (error) {
+      console.warn("[supabase] notifications.list fallback:", error instanceof Error ? error.message : error);
+      return readFallback();
+    }
+  };
+
+  const markNotificationsState = async ({
+    userId,
+    ids,
+    read
+  }: {
+    userId: string;
+    ids?: string[];
+    read: boolean;
+  }) => {
+    if (!userId) return;
+    if (!clients) {
+      fallbackNotifications = fallbackNotifications.map((entry) => {
+        if (entry.userId !== userId) return entry;
+        if (ids?.length && !ids.includes(entry.notificationId)) return entry;
+        return { ...entry, readAt: read ? Date.now() : undefined };
+      });
+      return;
+    }
+    try {
+      let query = admin
+        .from("notifications")
+        .update({ read_at: read ? new Date().toISOString() : null })
+        .eq("user_id", userId);
+      if (ids?.length) {
+        query = query.in("notification_id", ids);
+      }
+      await query;
+    } catch (error) {
+      console.warn("[supabase] notifications.markRead fallback:", error instanceof Error ? error.message : error);
+    } finally {
+      fallbackNotifications = fallbackNotifications.map((entry) => {
+        if (entry.userId !== userId) return entry;
+        if (ids?.length && !ids.includes(entry.notificationId)) return entry;
+        return { ...entry, readAt: read ? Date.now() : undefined };
+      });
+    }
+  };
+
   return {
     provider: "supabase",
     auth: {
@@ -465,18 +976,22 @@ export const createSupabaseBackend = (): BackendAdapter => {
           throw result.error ?? new Error("Unable to sign up");
         }
         const authUser = result.data.user;
-        const profile = {
+        const profile: Database["public"]["Tables"]["users"]["Row"] = {
           user_id: authUser.id,
           email,
           display_name: email.split("@")[0],
+          bio: null,
           skills: [],
+          profile_picture_url: null,
           connections: [],
           is_verified: false,
-          language: "en" as const,
-          joined_at: authUser.created_at ?? new Date().toISOString()
+          language: "en",
+          location: null,
+          joined_at: authUser.created_at ?? new Date().toISOString(),
+          profile: null
         };
         await admin.from("users").upsert(profile, { onConflict: "user_id" });
-        const user = mapUserRow(profile as Database["public"]["Tables"]["users"]["Row"]);
+        const user = mapUserRow(profile);
         const token = result.data.session?.access_token ?? "";
         currentSession = { token, user };
         return currentSession;
@@ -503,8 +1018,546 @@ export const createSupabaseBackend = (): BackendAdapter => {
         currentSession = null;
       }
     },
+    profilePortfolio: {
+      projects: {
+        list: async (userId: string) => {
+          if (!userId) return [];
+          const readFallback = () =>
+            [...fallbackProfileProjects.filter((project) => project.userId === userId)].sort(
+              (a, b) => b.createdAt - a.createdAt
+            );
+          try {
+            const { data, error } = await admin
+              .from("profile_projects")
+              .select("*")
+              .eq("user_id", userId)
+              .order("created_at", { ascending: false });
+            if (error) throw error;
+            const mapped = (data ?? []).map(mapProfileProjectRow);
+            fallbackProfileProjects = mergeById(fallbackProfileProjects, mapped, (item) => item.projectId);
+            return mapped;
+          } catch (error) {
+            console.warn("[supabase] profile.projects.list fallback:", error instanceof Error ? error.message : error);
+            return readFallback();
+          }
+        },
+        create: async (input) => {
+          const project: ProfileProject = {
+            projectId: input.projectId ?? generateId(),
+            userId: input.userId,
+            title: input.title,
+            summary: input.summary ?? undefined,
+            link: input.link ?? undefined,
+            status: input.status,
+            tags: input.tags ?? [],
+            year: input.year ?? undefined,
+            createdAt: Date.now()
+          };
+          try {
+            const { data, error } = await admin
+              .from("profile_projects")
+              .insert({
+                project_id: project.projectId,
+                user_id: project.userId,
+                title: project.title,
+                summary: project.summary ?? null,
+                link: project.link ?? null,
+                status: project.status ?? null,
+                tags: project.tags,
+                year: project.year ?? null
+              })
+              .select("*")
+              .single();
+            if (error || !data) {
+              throw error ?? new Error("Unable to create project");
+            }
+            const mapped = mapProfileProjectRow(data);
+            fallbackProfileProjects = mergeById(fallbackProfileProjects, [mapped], (item) => item.projectId);
+            return mapped;
+          } catch (error) {
+            console.warn("[supabase] profile.projects.create fallback:", error instanceof Error ? error.message : error);
+            fallbackProfileProjects = mergeById(fallbackProfileProjects, [project], (item) => item.projectId);
+            return project;
+          }
+        },
+        update: async (projectId, data) => {
+          const patch: Database["public"]["Tables"]["profile_projects"]["Update"] = {};
+          if (data.title !== undefined) patch.title = data.title;
+          if (data.summary !== undefined) patch.summary = data.summary ?? null;
+          if (data.link !== undefined) patch.link = data.link ?? null;
+          if (data.status !== undefined) patch.status = data.status ?? null;
+          if (data.tags !== undefined) patch.tags = data.tags;
+          if (data.year !== undefined) patch.year = data.year ?? null;
+          try {
+            const { data: row, error } = await admin
+              .from("profile_projects")
+              .update(patch)
+              .eq("project_id", projectId)
+              .select("*")
+              .single();
+            if (error || !row) {
+              throw error ?? new Error("Project not found");
+            }
+            const mapped = mapProfileProjectRow(row);
+            fallbackProfileProjects = mergeById(fallbackProfileProjects, [mapped], (item) => item.projectId);
+            return mapped;
+          } catch (error) {
+            console.warn("[supabase] profile.projects.update fallback:", error instanceof Error ? error.message : error);
+            const existing = fallbackProfileProjects.find((project) => project.projectId === projectId);
+            if (!existing) {
+              throw error instanceof Error ? error : new Error("Project not found");
+            }
+            const updated = {
+              ...existing,
+              ...data,
+              summary: data.summary !== undefined ? data.summary ?? undefined : existing.summary,
+              link: data.link !== undefined ? data.link ?? undefined : existing.link,
+              status: data.status ?? existing.status,
+              tags: data.tags ?? existing.tags,
+              year: data.year ?? existing.year
+            };
+            fallbackProfileProjects = mergeById(fallbackProfileProjects, [updated], (item) => item.projectId);
+            return updated;
+          }
+        },
+        remove: async (projectId) => {
+          try {
+            await admin.from("profile_projects").delete().eq("project_id", projectId);
+          } catch (error) {
+            console.warn("[supabase] profile.projects.remove fallback:", error instanceof Error ? error.message : error);
+          } finally {
+            fallbackProfileProjects = fallbackProfileProjects.filter((project) => project.projectId !== projectId);
+            fallbackProfileMedia = fallbackProfileMedia.filter((media) => media.projectId !== projectId);
+          }
+        }
+      },
+      media: {
+        list: async (userId: string) => {
+          if (!userId) return [];
+          const readFallback = () =>
+            [...fallbackProfileMedia.filter((media) => media.userId === userId)].sort(
+              (a, b) => b.createdAt - a.createdAt
+            );
+          try {
+            const { data, error } = await admin
+              .from("profile_media")
+              .select("*")
+              .eq("user_id", userId)
+              .order("created_at", { ascending: false });
+            if (error) throw error;
+            const mapped = (data ?? []).map(mapProfileMediaRow);
+            fallbackProfileMedia = mergeById(fallbackProfileMedia, mapped, (item) => item.mediaId);
+            return mapped;
+          } catch (error) {
+            console.warn("[supabase] profile.media.list fallback:", error instanceof Error ? error.message : error);
+            return readFallback();
+          }
+        },
+        create: async (input) => {
+          const media: ProfileMedia = {
+            mediaId: input.mediaId ?? generateId(),
+            userId: input.userId,
+            projectId: input.projectId ?? undefined,
+            type: input.type,
+            title: input.title ?? undefined,
+            description: input.description ?? undefined,
+            url: input.url,
+            thumbnailUrl: input.thumbnailUrl ?? undefined,
+            tags: input.tags ?? [],
+            createdAt: Date.now()
+          };
+          try {
+            const { data, error } = await admin
+              .from("profile_media")
+              .insert({
+                media_id: media.mediaId,
+                user_id: media.userId,
+                project_id: media.projectId ?? null,
+                type: media.type,
+                title: media.title ?? null,
+                description: media.description ?? null,
+                url: media.url,
+                thumbnail_url: media.thumbnailUrl ?? null,
+                tags: media.tags
+              })
+              .select("*")
+              .single();
+            if (error || !data) {
+              throw error ?? new Error("Unable to add media");
+            }
+            const mapped = mapProfileMediaRow(data);
+            fallbackProfileMedia = mergeById(fallbackProfileMedia, [mapped], (item) => item.mediaId);
+            return mapped;
+          } catch (error) {
+            console.warn("[supabase] profile.media.create fallback:", error instanceof Error ? error.message : error);
+            fallbackProfileMedia = mergeById(fallbackProfileMedia, [media], (item) => item.mediaId);
+            return media;
+          }
+        },
+        update: async (mediaId, data) => {
+          const patch: Database["public"]["Tables"]["profile_media"]["Update"] = {};
+          if (data.projectId !== undefined) patch.project_id = data.projectId ?? null;
+          if (data.type !== undefined) patch.type = data.type;
+          if (data.title !== undefined) patch.title = data.title ?? null;
+          if (data.description !== undefined) patch.description = data.description ?? null;
+          if (data.url !== undefined) patch.url = data.url;
+          if (data.thumbnailUrl !== undefined) patch.thumbnail_url = data.thumbnailUrl ?? null;
+          if (data.tags !== undefined) patch.tags = data.tags;
+          try {
+            const { data: row, error } = await admin
+              .from("profile_media")
+              .update(patch)
+              .eq("media_id", mediaId)
+              .select("*")
+              .single();
+            if (error || !row) {
+              throw error ?? new Error("Media not found");
+            }
+            const mapped = mapProfileMediaRow(row);
+            fallbackProfileMedia = mergeById(fallbackProfileMedia, [mapped], (item) => item.mediaId);
+            return mapped;
+          } catch (error) {
+            console.warn("[supabase] profile.media.update fallback:", error instanceof Error ? error.message : error);
+            const existing = fallbackProfileMedia.find((entry) => entry.mediaId === mediaId);
+            if (!existing) {
+              throw error instanceof Error ? error : new Error("Media not found");
+            }
+            const updated = {
+              ...existing,
+              ...data,
+              projectId: data.projectId !== undefined ? data.projectId ?? undefined : existing.projectId,
+              title: data.title !== undefined ? data.title ?? undefined : existing.title,
+              description: data.description !== undefined ? data.description ?? undefined : existing.description,
+              thumbnailUrl: data.thumbnailUrl !== undefined ? data.thumbnailUrl ?? undefined : existing.thumbnailUrl,
+              tags: data.tags ?? existing.tags
+            };
+            fallbackProfileMedia = mergeById(fallbackProfileMedia, [updated], (item) => item.mediaId);
+            return updated;
+          }
+        },
+        remove: async (mediaId) => {
+          try {
+            await admin.from("profile_media").delete().eq("media_id", mediaId);
+          } catch (error) {
+            console.warn("[supabase] profile.media.remove fallback:", error instanceof Error ? error.message : error);
+          } finally {
+            fallbackProfileMedia = fallbackProfileMedia.filter((media) => media.mediaId !== mediaId);
+          }
+        }
+      },
+      socials: {
+        list: async (userId: string) => {
+          if (!userId) return [];
+          const readFallback = () =>
+            [...fallbackProfileSocials.filter((entry) => entry.userId === userId)].sort(
+              (a, b) => b.createdAt - a.createdAt
+            );
+          try {
+            const { data, error } = await admin
+              .from("profile_socials")
+              .select("*")
+              .eq("user_id", userId)
+              .order("created_at", { ascending: false });
+            if (error) throw error;
+            const mapped = (data ?? []).map(mapProfileSocialRow);
+            fallbackProfileSocials = mergeById(fallbackProfileSocials, mapped, (item) => item.socialId);
+            return mapped;
+          } catch (error) {
+            console.warn("[supabase] profile.socials.list fallback:", error instanceof Error ? error.message : error);
+            return readFallback();
+          }
+        },
+        create: async (input) => {
+          const social: ProfileSocialLink = {
+            socialId: input.socialId ?? generateId(),
+            userId: input.userId,
+            platform: input.platform,
+            handle: input.handle ?? undefined,
+            url: input.url ?? undefined,
+            createdAt: Date.now()
+          };
+          try {
+            const { data, error } = await admin
+              .from("profile_socials")
+              .insert({
+                social_id: social.socialId,
+                user_id: social.userId,
+                platform: social.platform,
+                handle: social.handle ?? null,
+                url: social.url ?? null
+              })
+              .select("*")
+              .single();
+            if (error || !data) {
+              throw error ?? new Error("Unable to create social link");
+            }
+            const mapped = mapProfileSocialRow(data);
+            fallbackProfileSocials = mergeById(fallbackProfileSocials, [mapped], (item) => item.socialId);
+            return mapped;
+          } catch (error) {
+            console.warn("[supabase] profile.socials.create fallback:", error instanceof Error ? error.message : error);
+            fallbackProfileSocials = mergeById(fallbackProfileSocials, [social], (item) => item.socialId);
+            return social;
+          }
+        },
+        update: async (socialId, data) => {
+          const patch: Database["public"]["Tables"]["profile_socials"]["Update"] = {};
+          if (data.platform !== undefined) patch.platform = data.platform;
+          if (data.handle !== undefined) patch.handle = data.handle ?? null;
+          if (data.url !== undefined) patch.url = data.url ?? null;
+          try {
+            const { data: row, error } = await admin
+              .from("profile_socials")
+              .update(patch)
+              .eq("social_id", socialId)
+              .select("*")
+              .single();
+            if (error || !row) {
+              throw error ?? new Error("Social link not found");
+            }
+            const mapped = mapProfileSocialRow(row);
+            fallbackProfileSocials = mergeById(fallbackProfileSocials, [mapped], (item) => item.socialId);
+            return mapped;
+          } catch (error) {
+            console.warn("[supabase] profile.socials.update fallback:", error instanceof Error ? error.message : error);
+            const existing = fallbackProfileSocials.find((entry) => entry.socialId === socialId);
+            if (!existing) {
+              throw error instanceof Error ? error : new Error("Social link not found");
+            }
+            const updated = {
+              ...existing,
+              ...data,
+              handle: data.handle !== undefined ? data.handle ?? undefined : existing.handle,
+              url: data.url !== undefined ? data.url ?? undefined : existing.url
+            };
+            fallbackProfileSocials = mergeById(fallbackProfileSocials, [updated], (item) => item.socialId);
+            return updated;
+          }
+        },
+        remove: async (socialId) => {
+          try {
+            await admin.from("profile_socials").delete().eq("social_id", socialId);
+          } catch (error) {
+            console.warn("[supabase] profile.socials.remove fallback:", error instanceof Error ? error.message : error);
+          } finally {
+            fallbackProfileSocials = fallbackProfileSocials.filter((entry) => entry.socialId !== socialId);
+          }
+        }
+      }
+    },
+    orderMilestones: {
+      milestones: {
+        list: async (orderId: string) => {
+          if (!orderId) return [];
+          const readFallback = () =>
+            [...fallbackOrderMilestones.filter((entry) => entry.orderId === orderId)].sort(
+              (a, b) => a.createdAt - b.createdAt
+            );
+          try {
+            const { data, error } = await admin
+              .from("order_milestones")
+              .select("*")
+              .eq("order_id", orderId)
+              .order("created_at", { ascending: true });
+            if (error) throw error;
+            const mapped = (data ?? []).map(mapOrderMilestoneRow);
+            fallbackOrderMilestones = mergeById(fallbackOrderMilestones, mapped, (item) => item.milestoneId);
+            return mapped;
+          } catch (error) {
+            console.warn("[supabase] order.milestones.list fallback:", error instanceof Error ? error.message : error);
+            return readFallback();
+          }
+        },
+        create: async (input) => {
+          const milestone: OrderMilestone = {
+            milestoneId: input.milestoneId ?? generateId(),
+            orderId: input.orderId,
+            title: input.title,
+            amount: input.amount,
+            dueDate: input.dueDate,
+            status: input.status ?? "pending",
+            createdAt: Date.now(),
+            updatedAt: undefined
+          };
+          try {
+            const { data, error } = await admin
+              .from("order_milestones")
+              .insert({
+                milestone_id: milestone.milestoneId,
+                order_id: milestone.orderId,
+                title: milestone.title,
+                amount: milestone.amount,
+                due_date: milestone.dueDate ? new Date(milestone.dueDate).toISOString() : null,
+                status: milestone.status
+              })
+              .select("*")
+              .single();
+            if (error || !data) {
+              throw error ?? new Error("Unable to create milestone");
+            }
+            const mapped = mapOrderMilestoneRow(data);
+            fallbackOrderMilestones = mergeById(fallbackOrderMilestones, [mapped], (item) => item.milestoneId);
+            return mapped;
+          } catch (error) {
+            console.warn("[supabase] order.milestones.create fallback:", error instanceof Error ? error.message : error);
+            fallbackOrderMilestones = mergeById(fallbackOrderMilestones, [milestone], (item) => item.milestoneId);
+            return milestone;
+          }
+        },
+        update: async (milestoneId, data) => {
+          const patch: Database["public"]["Tables"]["order_milestones"]["Update"] = {
+            updated_at: new Date().toISOString()
+          };
+          if (data.title !== undefined) patch.title = data.title;
+          if (data.amount !== undefined) patch.amount = data.amount;
+          if (data.dueDate !== undefined) patch.due_date = data.dueDate ? new Date(data.dueDate).toISOString() : null;
+          if (data.status !== undefined) patch.status = data.status;
+          try {
+            const { data: row, error } = await admin
+              .from("order_milestones")
+              .update(patch)
+              .eq("milestone_id", milestoneId)
+              .select("*")
+              .single();
+            if (error || !row) {
+              throw error ?? new Error("Milestone not found");
+            }
+            const mapped = mapOrderMilestoneRow(row);
+            fallbackOrderMilestones = mergeById(fallbackOrderMilestones, [mapped], (item) => item.milestoneId);
+            return mapped;
+          } catch (error) {
+            console.warn("[supabase] order.milestones.update fallback:", error instanceof Error ? error.message : error);
+            const existing = fallbackOrderMilestones.find((entry) => entry.milestoneId === milestoneId);
+            if (!existing) {
+              throw error instanceof Error ? error : new Error("Milestone not found");
+            }
+            const updated: OrderMilestone = {
+              ...existing,
+              ...data,
+              dueDate: data.dueDate !== undefined ? data.dueDate ?? undefined : existing.dueDate,
+              updatedAt: Date.now()
+            };
+            fallbackOrderMilestones = mergeById(fallbackOrderMilestones, [updated], (item) => item.milestoneId);
+            return updated;
+          }
+        }
+      },
+      payouts: {
+        list: async (orderId: string) => {
+          if (!orderId) return [];
+          const readFallback = () =>
+            [...fallbackPayouts.filter((entry) => entry.orderId === orderId)].sort((a, b) => b.createdAt - a.createdAt);
+          try {
+            const { data, error } = await admin
+              .from("payouts")
+              .select("*")
+              .eq("order_id", orderId)
+              .order("created_at", { ascending: false });
+            if (error) throw error;
+            const mapped = (data ?? []).map(mapPayoutRow);
+            fallbackPayouts = mergeById(fallbackPayouts, mapped, (item) => item.payoutId);
+            return mapped;
+          } catch (error) {
+            console.warn("[supabase] payouts.list fallback:", error instanceof Error ? error.message : error);
+            return readFallback();
+          }
+        },
+        create: async (input) => {
+          const payout: Payout = {
+            payoutId: input.payoutId ?? generateId(),
+            orderId: input.orderId,
+            milestoneId: input.milestoneId ?? undefined,
+            payeeId: input.payeeId,
+            amount: input.amount,
+            currency: input.currency ?? "usd",
+            status: input.status ?? "initiated",
+            metadata: input.metadata,
+            createdAt: Date.now()
+          };
+          try {
+            const { data, error } = await admin
+              .from("payouts")
+              .insert({
+                payout_id: payout.payoutId,
+                order_id: payout.orderId,
+                milestone_id: payout.milestoneId ?? null,
+                payee_id: payout.payeeId,
+                amount: payout.amount,
+                currency: payout.currency,
+                status: payout.status,
+                metadata: payout.metadata ?? null
+              })
+              .select("*")
+              .single();
+            if (error || !data) {
+              throw error ?? new Error("Unable to create payout");
+            }
+            const mapped = mapPayoutRow(data);
+            fallbackPayouts = mergeById(fallbackPayouts, [mapped], (item) => item.payoutId);
+            return mapped;
+          } catch (error) {
+            console.warn("[supabase] payouts.create fallback:", error instanceof Error ? error.message : error);
+            fallbackPayouts = mergeById(fallbackPayouts, [payout], (item) => item.payoutId);
+            return payout;
+          }
+        },
+        update: async (payoutId, data) => {
+          const patch: Database["public"]["Tables"]["payouts"]["Update"] = {};
+          if (data.orderId !== undefined) patch.order_id = data.orderId;
+          if (data.milestoneId !== undefined) patch.milestone_id = data.milestoneId ?? null;
+          if (data.payeeId !== undefined) patch.payee_id = data.payeeId;
+          if (data.amount !== undefined) patch.amount = data.amount;
+          if (data.currency !== undefined) patch.currency = data.currency;
+          if (data.status !== undefined) patch.status = data.status;
+          if (data.metadata !== undefined) patch.metadata = data.metadata ?? null;
+          try {
+            const { data: row, error } = await admin
+              .from("payouts")
+              .update(patch)
+              .eq("payout_id", payoutId)
+              .select("*")
+              .single();
+            if (error || !row) {
+              throw error ?? new Error("Payout not found");
+            }
+            const mapped = mapPayoutRow(row);
+            fallbackPayouts = mergeById(fallbackPayouts, [mapped], (item) => item.payoutId);
+            return mapped;
+          } catch (error) {
+            console.warn("[supabase] payouts.update fallback:", error instanceof Error ? error.message : error);
+            const existing = fallbackPayouts.find((entry) => entry.payoutId === payoutId);
+            if (!existing) {
+              throw error instanceof Error ? error : new Error("Payout not found");
+            }
+            const updated: Payout = {
+              ...existing,
+              ...data,
+              milestoneId: data.milestoneId !== undefined ? data.milestoneId ?? undefined : existing.milestoneId,
+              metadata: data.metadata !== undefined ? data.metadata ?? undefined : existing.metadata
+            };
+            fallbackPayouts = mergeById(fallbackPayouts, [updated], (item) => item.payoutId);
+            return updated;
+          }
+        }
+      }
+    },
+    notifications: {
+      list: async ({ userId, since, limit = 50 }) => listNotificationEntries({ userId, since, limit }),
+      create: async (input) => createNotificationEntry(input),
+      markRead: async ({ userId, ids, read }) => markNotificationsState({ userId, ids, read })
+    },
     users: {
       list: async ({ query }) => {
+        if (isClientRuntime) {
+          try {
+            const response = await fetchFromApi<{ items: User[] }>(`/api/users${buildQueryString({ query })}`);
+            if (Array.isArray(response.items)) {
+              return response.items;
+            }
+          } catch (error) {
+            console.warn("[supabase] users.list api fallback:", error instanceof Error ? error.message : error);
+          }
+        }
         const builder = admin.from("users").select("*");
         if (query) {
           builder.or(
@@ -527,6 +1580,16 @@ export const createSupabaseBackend = (): BackendAdapter => {
         return data.map(mapUserRow);
       },
       get: async (id) => {
+        if (isClientRuntime) {
+          try {
+            const user = await fetchFromApi<User>(`/api/users${buildQueryString({ id })}`);
+            if (user?.userId) {
+              return user;
+            }
+          } catch (error) {
+            console.warn("[supabase] users.get api fallback:", error instanceof Error ? error.message : error);
+          }
+        }
         const { data, error } = await admin.from("users").select("*").eq("user_id", id).single();
         if (error && error.code !== "PGRST116") {
           console.warn("[supabase] users.get fallback:", error.message);
@@ -538,6 +1601,18 @@ export const createSupabaseBackend = (): BackendAdapter => {
         return fallback ?? null;
       },
       update: async (id, input) => {
+        if (isClientRuntime && !SUPABASE_SERVICE_ROLE_KEY) {
+          const response = await fetch(`/api/users?id=${encodeURIComponent(id)}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(input)
+          });
+          const payload = await response.json().catch(() => null);
+          if (!response.ok) {
+            throw new Error(payload?.error?.message ?? "Unable to save profile");
+          }
+          return payload as User;
+        }
         const updatePayload: Database["public"]["Tables"]["users"]["Update"] = {
           display_name: input.displayName,
           bio: input.bio,
@@ -575,6 +1650,16 @@ export const createSupabaseBackend = (): BackendAdapter => {
     },
     hubs: {
       list: async () => {
+        if (isClientRuntime) {
+          try {
+            const response = await fetchFromApi<{ items: Hub[] }>("/api/hubs");
+            if (Array.isArray(response.items)) {
+              return response.items;
+            }
+          } catch (error) {
+            console.warn("[supabase] hubs.list api fallback:", error instanceof Error ? error.message : error);
+          }
+        }
         const { data, error } = await admin.from("hubs").select("*");
         if (error || !data) {
           if (error) {
@@ -623,6 +1708,21 @@ export const createSupabaseBackend = (): BackendAdapter => {
         }
       },
       listActive: async ({ near }: { near?: { lat: number; lng: number } } = {}) => {
+        if (isClientRuntime) {
+          try {
+            const response = await fetchFromApi<{ items: Checkin[] }>(
+              `/api/checkin${buildQueryString({
+                lat: near?.lat,
+                lng: near?.lng
+              })}`
+            );
+            if (Array.isArray(response.items)) {
+              return sortByNearIfNeeded(response.items, near);
+            }
+          } catch (error) {
+            console.warn("[supabase] checkins.listActive api fallback:", error instanceof Error ? error.message : error);
+          }
+        }
         if (!clients) {
           cleanupFallbackCheckins();
           return sortByNearIfNeeded([...fallbackCheckins], near);
@@ -650,6 +1750,20 @@ export const createSupabaseBackend = (): BackendAdapter => {
     },
     matches: {
       suggest: async ({ userId }) => {
+        if (isClientRuntime) {
+          try {
+            const response = await fetchFromApi<{ items: MatchSuggestion[] }>("/api/match", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ userId })
+            });
+            if (Array.isArray(response.items)) {
+              return response.items;
+            }
+          } catch (error) {
+            console.warn("[supabase] matches.suggest api fallback:", error instanceof Error ? error.message : error);
+          }
+        }
         const { data: userRows, error: userError } = await admin.from("users").select("*");
         const { data: hubRows, error: hubError } = await admin.from("hubs").select("*");
 
@@ -689,11 +1803,156 @@ export const createSupabaseBackend = (): BackendAdapter => {
         if (!suggestions.length) {
           suggestions = buildMatchSuggestions(userId, sampleUsers, sampleHubs);
         }
+        const history = await loadMatchHistory(userId);
+        if (history.length) {
+          const excluded = new Set(history.map((entry) => entry.targetId));
+          suggestions = suggestions.filter((candidate) => !excluded.has(candidate.userId));
+        }
         return suggestions;
+      },
+      history: async ({ userId }) => loadMatchHistory(userId),
+      incomingLikes: async ({ userId }) => loadIncomingLikes(userId),
+      recordAction: async ({ userId, targetId, action, createdAt }) => {
+        if (!userId) {
+          throw new Error("userId required");
+        }
+        if (isClientRuntime) {
+          try {
+            const response = await fetchFromApi<MatchActionResult>("/api/match/actions", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ userId, targetId, action, createdAt })
+            });
+            if (response) {
+              upsertFallbackMatchAction(response.action);
+              return response;
+            }
+          } catch (error) {
+            console.warn("[supabase] matches.recordAction api fallback:", error instanceof Error ? error.message : error);
+          }
+        }
+        if (!clients) {
+          const entry: MatchAction = {
+            id: generateId(),
+            userId,
+            targetId,
+            action,
+            createdAt: createdAt ?? Date.now()
+          };
+          upsertFallbackMatchAction(entry);
+          let match: MatchActionResult["match"];
+          if (action === "connected") {
+            const reciprocal = fallbackMatchActions.find(
+              (candidate) =>
+                candidate.userId === targetId && candidate.targetId === userId && candidate.action === "connected"
+            );
+            if (reciprocal) {
+              match = {
+                chatId: generateId(),
+                user: getFallbackUser(targetId) ?? sampleUsers[0]
+              };
+            }
+          }
+          return { action: entry, match };
+        }
+        try {
+          const { admin } = clients;
+          const insertPayload: Database["public"]["Tables"]["match_actions"]["Insert"] = {
+            id: generateId(),
+            user_id: userId,
+            target_id: targetId,
+            action,
+            created_at: new Date((createdAt ?? Date.now())).toISOString()
+          };
+          const { data, error } = await admin.from("match_actions").insert(insertPayload).select("*").single();
+          if (error || !data) {
+            throw error ?? new Error("Unable to log match action");
+          }
+          const mapped = mapMatchActionRow(data);
+          upsertFallbackMatchAction(mapped);
+          const actorProfile = (await fetchUserById(userId)) ?? (getFallbackUser(userId) ?? sampleUsers[0]);
+          let cachedTargetProfile: User | null = null;
+          const resolveTargetProfile = async () => {
+            if (cachedTargetProfile) return cachedTargetProfile;
+            cachedTargetProfile =
+              (await fetchUserById(targetId)) ?? (getFallbackUser(targetId) ?? sampleUsers[0]);
+            return cachedTargetProfile;
+          };
+          let match: MatchActionResult["match"];
+          if (action === "connected") {
+            await createNotificationEntry({
+              userId: targetId,
+              kind: "system",
+              title: `${actorProfile.displayName} liked your profile`,
+              body: "Open their profile to connect back.",
+              link: `/profile/${actorProfile.userId}`,
+              linkLabel: "View profile",
+              metadata: { actorId: actorProfile.userId, actionId: mapped.id }
+            });
+            const { data: reciprocal } = await admin
+              .from("match_actions")
+              .select("*")
+              .eq("user_id", targetId)
+              .eq("target_id", userId)
+              .eq("action", "connected")
+              .order("created_at", { ascending: false })
+              .limit(1)
+              .maybeSingle();
+            if (reciprocal) {
+              const chatId = await ensureDirectChat(userId, targetId);
+              if (chatId) {
+                const targetUser = await resolveTargetProfile();
+                match = { chatId, user: targetUser };
+                await createNotificationEntry({
+                  userId,
+                  kind: "system",
+                  title: `You matched with ${targetUser.displayName}`,
+                  body: "Start a conversation now.",
+                  link: `/messages?chat=${chatId}`,
+                  linkLabel: "Open chat",
+                  secondaryLink: `/profile/${targetUser.userId}`,
+                  secondaryLinkLabel: "View profile",
+                  metadata: { chatId, otherUserId: targetUser.userId }
+                });
+                await createNotificationEntry({
+                  userId: targetId,
+                  kind: "system",
+                  title: `You matched with ${actorProfile.displayName}`,
+                  body: "Start a conversation now.",
+                  link: `/messages?chat=${chatId}`,
+                  linkLabel: "Open chat",
+                  secondaryLink: `/profile/${actorProfile.userId}`,
+                  secondaryLinkLabel: "View profile",
+                  metadata: { chatId, otherUserId: actorProfile.userId }
+                });
+              }
+            }
+          }
+          return { action: mapped, match };
+        } catch (error) {
+          console.warn("[supabase] matches.recordAction fallback:", error instanceof Error ? error.message : error);
+          const fallback: MatchAction = {
+            id: generateId(),
+            userId,
+            targetId,
+            action,
+            createdAt: createdAt ?? Date.now()
+          };
+          upsertFallbackMatchAction(fallback);
+          return { action: fallback };
+        }
       }
     },
     messages: {
       listChats: async ({ userId }) => {
+        if (isClientRuntime && !SUPABASE_SERVICE_ROLE_KEY) {
+          const response = await fetch(`/api/messages?userId=${encodeURIComponent(userId)}`);
+          const payload = await response.json().catch(() => null);
+          if (!response.ok) {
+            throw new Error(payload?.error?.message ?? "Unable to load chats");
+          }
+          return (payload?.items ?? []) as Chat[];
+        }
         const { data, error } = await admin
           .from("chats")
           .select("*")
@@ -879,14 +2138,24 @@ export const createSupabaseBackend = (): BackendAdapter => {
         });
       },
       createChat: async ({ memberIds, isGroup, title }) => {
+        if (isClientRuntime && !SUPABASE_SERVICE_ROLE_KEY) {
+          const response = await fetch("/api/messages", {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ memberIds, isGroup, title })
+          });
+          const payload = await response.json().catch(() => null);
+          if (!response.ok) {
+            throw new Error(payload?.error?.message ?? "Unable to create chat");
+          }
+          return payload as Chat;
+        }
         const chat: Database["public"]["Tables"]["chats"]["Insert"] = {
           chat_id: generateId(),
           member_ids: memberIds,
           is_group: isGroup,
           title: title ?? null,
-          created_at: new Date().toISOString(),
-          archived_by: [],
-          hidden_by: []
+          created_at: new Date().toISOString()
         };
         const { data, error } = await admin.from("chats").insert(chat).select("*").single();
         if (error) throw error;
@@ -898,7 +2167,12 @@ export const createSupabaseBackend = (): BackendAdapter => {
         if (!row.member_ids.includes(userId)) {
           throw new Error("User not in chat");
         }
-        const archiveSet = new Set(row.archived_by ?? []);
+        const archivedBy = (row as { archived_by?: string[] | null }).archived_by;
+        if (archivedBy === undefined) {
+          console.warn("[supabase] archiveChat skipped: archived_by column missing");
+          return mapChatRow(row);
+        }
+        const archiveSet = new Set(archivedBy ?? []);
         if (archived) {
           archiveSet.add(userId);
         } else {
@@ -921,10 +2195,17 @@ export const createSupabaseBackend = (): BackendAdapter => {
         if (!row.member_ids.includes(userId)) {
           throw new Error("User not in chat");
         }
-        const hiddenSet = new Set(row.hidden_by ?? []);
+        const hiddenBy = (row as { hidden_by?: string[] | null }).hidden_by;
+        if (hiddenBy === undefined) {
+          await admin.from("messages").delete().eq("chat_id", chatId);
+          await admin.from("chats").delete().eq("chat_id", chatId);
+          emitEvent({ type: "chat:removed", chatId });
+          return;
+        }
+        const hiddenSet = new Set(hiddenBy ?? []);
         if (hiddenSet.has(userId)) return;
         hiddenSet.add(userId);
-        const shouldDelete = row.member_ids.every((id) => hiddenSet.has(id));
+        const shouldDelete = row.member_ids.every((memberId: string) => hiddenSet.has(memberId));
         if (shouldDelete) {
           await admin.from("messages").delete().eq("chat_id", chatId);
           await admin.from("chats").delete().eq("chat_id", chatId);
@@ -943,6 +2224,22 @@ export const createSupabaseBackend = (): BackendAdapter => {
     },
     marketplace: {
       list: async ({ tag, priceMin, priceMax }) => {
+        if (isClientRuntime) {
+          try {
+            const response = await fetchFromApi<{ items: Artwork[] }>(
+              `/api/marketplace${buildQueryString({
+                tag,
+                priceMin,
+                priceMax
+              })}`
+            );
+            if (Array.isArray(response.items)) {
+              return response.items;
+            }
+          } catch (error) {
+            console.warn("[supabase] marketplace.list api fallback:", error instanceof Error ? error.message : error);
+          }
+        }
         const builder = admin.from("artworks").select("*").order("created_at", { ascending: false });
         if (tag) builder.contains("tags", [tag]);
         if (typeof priceMin === "number") builder.gte("price", priceMin);
@@ -1260,7 +2557,7 @@ export const createSupabaseBackend = (): BackendAdapter => {
       update: async ({ eventId, data }) => {
         const updates: Database["public"]["Tables"]["events"]["Update"] = {};
         if (Object.prototype.hasOwnProperty.call(data, "title")) {
-          updates.title = data.title ?? null;
+          updates.title = data.title ?? undefined;
         }
         if (Object.prototype.hasOwnProperty.call(data, "description")) {
           updates.description = data.description ?? null;
@@ -1368,9 +2665,71 @@ export const createSupabaseBackend = (): BackendAdapter => {
       }
     },
     rewards: {
-      summary: async () => ({ total: 0, logs: [] }),
-      log: async () => {
-        throw new Error("Rewards not yet implemented for Supabase backend.");
+      summary: async ({ userId }) => {
+        if (!userId) {
+          return { total: 0, logs: [] };
+        }
+        if (!clients) {
+          return getRewardSummaryForUser(userId);
+        }
+        try {
+          const { admin } = clients;
+          const { data, error } = await admin
+            .from("rewards")
+            .select("*")
+            .eq("user_id", userId)
+            .order("created_at", { ascending: false });
+          if (error || !data) {
+            throw error ?? new Error("Unable to load rewards");
+          }
+          const mapped: RewardLog[] =
+            data?.map((row) => ({
+              id: row.id ?? generateId(),
+              userId: row.user_id,
+              action: (row.action as RewardLog["action"]) ?? "checkin",
+              points: row.points ?? 0,
+              createdAt: row.created_at ? new Date(row.created_at).getTime() : Date.now()
+            })) ?? [];
+          fallbackRewards = [
+            ...fallbackRewards.filter((log) => log.userId !== userId),
+            ...mapped
+          ];
+          return {
+            total: mapped.reduce((sum, log) => sum + log.points, 0),
+            logs: mapped
+          };
+        } catch (error) {
+          console.warn("[supabase] rewards.summary falling back:", error);
+          return getRewardSummaryForUser(userId);
+        }
+      },
+      log: async (log) => {
+        const entry: RewardLog = {
+          ...log,
+          id: log.id ?? generateId(),
+          createdAt: log.createdAt ?? Date.now()
+        };
+        if (!clients) {
+          fallbackRewards = [...fallbackRewards, entry];
+          return entry;
+        }
+        try {
+          const { admin } = clients;
+          const { error } = await admin.from("rewards").insert({
+            id: entry.id,
+            user_id: entry.userId,
+            action: entry.action,
+            points: entry.points,
+            created_at: new Date(entry.createdAt).toISOString()
+          });
+          if (error) throw error;
+          fallbackRewards = [...fallbackRewards, entry];
+          return entry;
+        } catch (error) {
+          console.warn("[supabase] rewards.log falling back:", error);
+          fallbackRewards = [...fallbackRewards, entry];
+          return entry;
+        }
       }
     },
     uploads: {
@@ -1380,7 +2739,7 @@ export const createSupabaseBackend = (): BackendAdapter => {
         try {
           const { data, error } = await admin.storage
             .from(SUPABASE_STORAGE_BUCKET)
-            .createSignedUploadUrl(objectPath, 60);
+            .createSignedUploadUrl(objectPath);
           if (error || !data) {
             throw error ?? new Error("Unable to create signed upload URL");
           }
@@ -1407,8 +2766,320 @@ export const createSupabaseBackend = (): BackendAdapter => {
           };
         }
       }
+    },
+    adminQueues: {
+      verification: {
+        submit: async (input) => {
+          const request: VerificationRequest = {
+            requestId: input.requestId ?? generateId(),
+            userId: input.userId,
+            portfolioUrl: input.portfolioUrl ?? undefined,
+            statement: input.statement ?? undefined,
+            status: "pending",
+            reviewerId: undefined,
+            reviewedAt: undefined,
+            notes: undefined,
+            createdAt: Date.now()
+          };
+          try {
+            const { data, error } = await admin
+              .from("verification_requests")
+              .insert({
+                request_id: request.requestId,
+                user_id: request.userId,
+                portfolio_url: request.portfolioUrl ?? null,
+                statement: request.statement ?? null,
+                status: request.status,
+                notes: request.notes ?? null
+              })
+              .select("*")
+              .single();
+            if (error || !data) {
+              throw error ?? new Error("Unable to submit verification request");
+            }
+            const mapped = mapVerificationRequestRow(data);
+            fallbackVerificationRequests = mergeById(
+              fallbackVerificationRequests,
+              [mapped],
+              (item) => item.requestId
+            );
+            return mapped;
+          } catch (error) {
+            console.warn("[supabase] verification.submit fallback:", error instanceof Error ? error.message : error);
+            fallbackVerificationRequests = mergeById(
+              fallbackVerificationRequests,
+              [request],
+              (item) => item.requestId
+            );
+            return request;
+          }
+        },
+        list: async (input) => {
+          const status = input?.status;
+          const readFallback = () =>
+            [...fallbackVerificationRequests.filter((entry) => (status ? entry.status === status : true))].sort(
+              (a, b) => b.createdAt - a.createdAt
+            );
+          try {
+            let query = admin.from("verification_requests").select("*").order("created_at", { ascending: false });
+            if (status) {
+              query = query.eq("status", status);
+            }
+            const { data, error } = await query;
+            if (error) throw error;
+            const mapped = (data ?? []).map(mapVerificationRequestRow);
+            fallbackVerificationRequests = mergeById(
+              fallbackVerificationRequests,
+              mapped,
+              (item) => item.requestId
+            );
+            return mapped;
+          } catch (error) {
+            console.warn("[supabase] verification.list fallback:", error instanceof Error ? error.message : error);
+            return readFallback();
+          }
+        },
+        update: async (requestId, data) => {
+          const patch: Database["public"]["Tables"]["verification_requests"]["Update"] = {};
+          if (data.portfolioUrl !== undefined) patch.portfolio_url = data.portfolioUrl ?? null;
+          if (data.statement !== undefined) patch.statement = data.statement ?? null;
+          if (data.status !== undefined) patch.status = data.status;
+          if (data.reviewerId !== undefined) patch.reviewer_id = data.reviewerId ?? null;
+          if (data.reviewedAt !== undefined) patch.reviewed_at = data.reviewedAt ? new Date(data.reviewedAt).toISOString() : null;
+          if (data.notes !== undefined) patch.notes = data.notes ?? null;
+          try {
+            const { data: row, error } = await admin
+              .from("verification_requests")
+              .update(patch)
+              .eq("request_id", requestId)
+              .select("*")
+              .single();
+            if (error || !row) {
+              throw error ?? new Error("Verification request not found");
+            }
+            const mapped = mapVerificationRequestRow(row);
+            fallbackVerificationRequests = mergeById(
+              fallbackVerificationRequests,
+              [mapped],
+              (item) => item.requestId
+            );
+            return mapped;
+          } catch (error) {
+            console.warn("[supabase] verification.update fallback:", error instanceof Error ? error.message : error);
+            const existing = fallbackVerificationRequests.find((entry) => entry.requestId === requestId);
+            if (!existing) {
+              throw error instanceof Error ? error : new Error("Verification request not found");
+            }
+            const updated: VerificationRequest = {
+              ...existing,
+              ...data,
+              portfolioUrl: data.portfolioUrl !== undefined ? data.portfolioUrl ?? undefined : existing.portfolioUrl,
+              statement: data.statement !== undefined ? data.statement ?? undefined : existing.statement,
+              reviewerId: data.reviewerId !== undefined ? data.reviewerId ?? undefined : existing.reviewerId,
+              reviewedAt: data.reviewedAt ?? existing.reviewedAt,
+              notes: data.notes !== undefined ? data.notes ?? undefined : existing.notes,
+              status: data.status ?? existing.status
+            };
+            fallbackVerificationRequests = mergeById(fallbackVerificationRequests, [updated], (item) => item.requestId);
+            return updated;
+          }
+        }
+      },
+      moderation: {
+        report: async (input) => {
+          const report: ModerationQueueItem = {
+            queueId: input.queueId ?? generateId(),
+            resourceType: input.resourceType,
+            resourceId: input.resourceId,
+            reportedBy: input.reportedBy ?? undefined,
+            reason: input.reason ?? undefined,
+            status: "open",
+            reviewerId: undefined,
+            reviewedAt: undefined,
+            resolution: undefined,
+            createdAt: Date.now()
+          };
+          try {
+            const { data, error } = await admin
+              .from("moderation_queue")
+              .insert({
+                queue_id: report.queueId,
+                resource_type: report.resourceType,
+                resource_id: report.resourceId,
+                reported_by: report.reportedBy ?? null,
+                reason: report.reason ?? null,
+                status: report.status
+              })
+              .select("*")
+              .single();
+            if (error || !data) {
+              throw error ?? new Error("Unable to submit report");
+            }
+            const mapped = mapModerationQueueRow(data);
+            fallbackModerationQueue = mergeById(fallbackModerationQueue, [mapped], (item) => item.queueId);
+            return mapped;
+          } catch (error) {
+            console.warn("[supabase] moderation.report fallback:", error instanceof Error ? error.message : error);
+            fallbackModerationQueue = mergeById(fallbackModerationQueue, [report], (item) => item.queueId);
+            return report;
+          }
+        },
+        list: async (input) => {
+          const status = input?.status;
+          const readFallback = () =>
+            [...fallbackModerationQueue.filter((entry) => (status ? entry.status === status : true))].sort(
+              (a, b) => b.createdAt - a.createdAt
+            );
+          try {
+            let query = admin.from("moderation_queue").select("*").order("created_at", { ascending: false });
+            if (status) {
+              query = query.eq("status", status);
+            }
+            const { data, error } = await query;
+            if (error) throw error;
+            const mapped = (data ?? []).map(mapModerationQueueRow);
+            fallbackModerationQueue = mergeById(fallbackModerationQueue, mapped, (item) => item.queueId);
+            return mapped;
+          } catch (error) {
+            console.warn("[supabase] moderation.list fallback:", error instanceof Error ? error.message : error);
+            return readFallback();
+          }
+        },
+        resolve: async (queueId, data) => {
+          const patch: Database["public"]["Tables"]["moderation_queue"]["Update"] = {};
+          if (data.status !== undefined) patch.status = data.status;
+          if (data.reviewerId !== undefined) patch.reviewer_id = data.reviewerId ?? null;
+          if (data.reviewedAt !== undefined) patch.reviewed_at = data.reviewedAt ? new Date(data.reviewedAt).toISOString() : null;
+          if (data.resolution !== undefined) patch.resolution = data.resolution ?? null;
+          try {
+            const { data: row, error } = await admin
+              .from("moderation_queue")
+              .update(patch)
+              .eq("queue_id", queueId)
+              .select("*")
+              .single();
+            if (error || !row) {
+              throw error ?? new Error("Moderation record not found");
+            }
+            const mapped = mapModerationQueueRow(row);
+            fallbackModerationQueue = mergeById(fallbackModerationQueue, [mapped], (item) => item.queueId);
+            return mapped;
+          } catch (error) {
+            console.warn("[supabase] moderation.resolve fallback:", error instanceof Error ? error.message : error);
+            const existing = fallbackModerationQueue.find((entry) => entry.queueId === queueId);
+            if (!existing) {
+              throw error instanceof Error ? error : new Error("Moderation record not found");
+            }
+            const updated: ModerationQueueItem = {
+              ...existing,
+              ...data,
+              reviewerId: data.reviewerId !== undefined ? data.reviewerId ?? undefined : existing.reviewerId,
+              reviewedAt: data.reviewedAt ?? existing.reviewedAt,
+              resolution: data.resolution !== undefined ? data.resolution ?? undefined : existing.resolution,
+              status: data.status ?? existing.status
+            };
+            fallbackModerationQueue = mergeById(fallbackModerationQueue, [updated], (item) => item.queueId);
+            return updated;
+          }
+        }
+      },
+      support: {
+        submit: async (input) => {
+          const ticket: SupportTicket = {
+            ticketId: input.ticketId ?? generateId(),
+            userId: input.userId ?? undefined,
+            subject: input.subject,
+            body: input.body ?? undefined,
+            status: "open",
+            assignedTo: undefined,
+            createdAt: Date.now(),
+            updatedAt: undefined
+          };
+          try {
+            const { data, error } = await admin
+              .from("support_tickets")
+              .insert({
+                ticket_id: ticket.ticketId,
+                user_id: ticket.userId ?? null,
+                subject: ticket.subject,
+                body: ticket.body ?? null,
+                status: ticket.status
+              })
+              .select("*")
+              .single();
+            if (error || !data) {
+              throw error ?? new Error("Unable to submit support ticket");
+            }
+            const mapped = mapSupportTicketRow(data);
+            fallbackSupportTickets = mergeById(fallbackSupportTickets, [mapped], (item) => item.ticketId);
+            return mapped;
+          } catch (error) {
+            console.warn("[supabase] support.submit fallback:", error instanceof Error ? error.message : error);
+            fallbackSupportTickets = mergeById(fallbackSupportTickets, [ticket], (item) => item.ticketId);
+            return ticket;
+          }
+        },
+        list: async (input) => {
+          const status = input?.status;
+          const readFallback = () =>
+            [...fallbackSupportTickets.filter((entry) => (status ? entry.status === status : true))].sort(
+              (a, b) => b.createdAt - a.createdAt
+            );
+          try {
+            let query = admin.from("support_tickets").select("*").order("created_at", { ascending: false });
+            if (status) {
+              query = query.eq("status", status);
+            }
+            const { data, error } = await query;
+            if (error) throw error;
+            const mapped = (data ?? []).map(mapSupportTicketRow);
+            fallbackSupportTickets = mergeById(fallbackSupportTickets, mapped, (item) => item.ticketId);
+            return mapped;
+          } catch (error) {
+            console.warn("[supabase] support.list fallback:", error instanceof Error ? error.message : error);
+            return readFallback();
+          }
+        },
+        update: async (ticketId, data) => {
+          const patch: Database["public"]["Tables"]["support_tickets"]["Update"] = {
+            updated_at: new Date().toISOString()
+          };
+          if (data.subject !== undefined) patch.subject = data.subject;
+          if (data.body !== undefined) patch.body = data.body ?? null;
+          if (data.status !== undefined) patch.status = data.status;
+          if (data.assignedTo !== undefined) patch.assigned_to = data.assignedTo ?? null;
+          try {
+            const { data: row, error } = await admin
+              .from("support_tickets")
+              .update(patch)
+              .eq("ticket_id", ticketId)
+              .select("*")
+              .single();
+            if (error || !row) {
+              throw error ?? new Error("Support ticket not found");
+            }
+            const mapped = mapSupportTicketRow(row);
+            fallbackSupportTickets = mergeById(fallbackSupportTickets, [mapped], (item) => item.ticketId);
+            return mapped;
+          } catch (error) {
+            console.warn("[supabase] support.update fallback:", error instanceof Error ? error.message : error);
+            const existing = fallbackSupportTickets.find((entry) => entry.ticketId === ticketId);
+            if (!existing) {
+              throw error instanceof Error ? error : new Error("Support ticket not found");
+            }
+            const updated: SupportTicket = {
+              ...existing,
+              ...data,
+              body: data.body !== undefined ? data.body ?? undefined : existing.body,
+              assignedTo: data.assignedTo !== undefined ? data.assignedTo ?? undefined : existing.assignedTo,
+              status: data.status ?? existing.status,
+              updatedAt: Date.now()
+            };
+            fallbackSupportTickets = mergeById(fallbackSupportTickets, [updated], (item) => item.ticketId);
+            return updated;
+          }
+        }
+      }
     }
   };
 };
-
-

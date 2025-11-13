@@ -181,6 +181,137 @@ export interface RewardLog {
   createdAt: number;
 }
 
+export interface MatchAction {
+  id?: string;
+  userId: string;
+  targetId: string;
+  action: "connected" | "skipped";
+  createdAt: number;
+}
+
+export interface MatchActionResult {
+  action: MatchAction;
+  match?: {
+    chatId: string;
+    user: User;
+  };
+}
+
+export interface MatchLikeAlert {
+  action: MatchAction;
+  from: User;
+  isMutual: boolean;
+  chatId?: string;
+}
+
+export interface ProfileProject {
+  projectId: string;
+  userId: string;
+  title: string;
+  summary?: string;
+  link?: string;
+  status?: "draft" | "live";
+  tags: string[];
+  year?: number;
+  createdAt: number;
+}
+
+export interface ProfileMedia {
+  mediaId: string;
+  userId: string;
+  projectId?: string;
+  type: "image" | "video" | "document";
+  title?: string;
+  description?: string;
+  url: string;
+  thumbnailUrl?: string;
+  tags: string[];
+  createdAt: number;
+}
+
+export interface ProfileSocialLink {
+  socialId: string;
+  userId: string;
+  platform: string;
+  handle?: string;
+  url?: string;
+  createdAt: number;
+}
+
+export interface OrderMilestone {
+  milestoneId: string;
+  orderId: string;
+  title: string;
+  amount: number;
+  dueDate?: number;
+  status: "pending" | "submitted" | "approved" | "paid";
+  createdAt: number;
+  updatedAt?: number;
+}
+
+export interface Payout {
+  payoutId: string;
+  orderId: string;
+  milestoneId?: string;
+  payeeId: string;
+  amount: number;
+  currency: string;
+  status: "initiated" | "processing" | "paid" | "failed";
+  metadata?: Record<string, unknown>;
+  createdAt: number;
+}
+
+export interface NotificationEntry {
+  notificationId: string;
+  userId: string;
+  kind: string;
+  title: string;
+  body?: string;
+  link?: string;
+  linkLabel?: string;
+  secondaryLink?: string;
+  secondaryLinkLabel?: string;
+  metadata?: Record<string, unknown>;
+  createdAt: number;
+  readAt?: number | null;
+}
+
+export interface VerificationRequest {
+  requestId: string;
+  userId: string;
+  portfolioUrl?: string;
+  statement?: string;
+  status: "pending" | "approved" | "rejected";
+  reviewerId?: string;
+  reviewedAt?: number;
+  notes?: string;
+  createdAt: number;
+}
+
+export interface ModerationQueueItem {
+  queueId: string;
+  resourceType: string;
+  resourceId: string;
+  reportedBy?: string;
+  reason?: string;
+  status: "open" | "in_review" | "resolved";
+  reviewerId?: string;
+  reviewedAt?: number;
+  resolution?: string;
+  createdAt: number;
+}
+
+export interface SupportTicket {
+  ticketId: string;
+  userId?: string;
+  subject: string;
+  body?: string;
+  status: "open" | "in_progress" | "closed";
+  assignedTo?: string;
+  createdAt: number;
+  updatedAt?: number;
+}
+
 export type Locale = "en" | "fr" | "es";
 
 export type MessageEvent =

@@ -45,7 +45,23 @@ export const MessageSchema = z.object({
   chatId: z.string(),
   senderId: z.string(),
   content: z.string().max(4000).optional(),
-  mediaUrl: z.string().url().optional()
+  attachments: z
+    .array(
+      z.object({
+        attachmentId: z.string(),
+        type: z.enum(["image", "video", "audio", "document", "gif", "sticker"]),
+        url: z.string().url(),
+        name: z.string().optional(),
+        sizeBytes: z.number().optional(),
+        durationMs: z.number().optional(),
+        thumbnailUrl: z.string().url().optional()
+      })
+    )
+    .optional(),
+  metadata: z.record(z.unknown()).optional(),
+  isSilent: z.boolean().optional(),
+  scheduledFor: z.number().optional(),
+  expiresAt: z.number().optional()
 });
 
 export const ChatSchema = z.object({
@@ -101,6 +117,13 @@ export const RewardLogSchema = z.object({
   userId: z.string(),
   action: z.enum(["onboarding", "checkin", "match", "sale", "rsvp"]),
   points: z.number().min(0),
+  createdAt: z.number().optional()
+});
+
+export const MatchActionSchema = z.object({
+  userId: z.string().optional(),
+  targetId: z.string(),
+  action: z.enum(["connected", "skipped"]),
   createdAt: z.number().optional()
 });
 

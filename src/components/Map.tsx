@@ -2,15 +2,18 @@
 
 import { useEffect, useMemo, useRef } from "react";
 import { useI18n } from "@/context/i18n";
-import type { Hub, Checkin } from "@/lib/types";
+import type { Hub, Checkin, User } from "@/lib/types";
 import { getMapboxToken } from "@/lib/mapbox";
+
+type MapCheckin = Checkin & { profile?: User; distanceKm?: number | null };
 
 interface MapProps {
   hubs: Hub[];
-  checkins: Checkin[];
+  checkins: MapCheckin[];
+  viewerLocation?: { lat: number; lng: number } | null;
 }
 
-export const Map = ({ hubs, checkins }: MapProps) => {
+export const Map = ({ hubs, checkins, viewerLocation }: MapProps) => {
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
   const { t } = useI18n();
 
@@ -32,17 +35,30 @@ export const Map = ({ hubs, checkins }: MapProps) => {
       });
 
       hubs.forEach((hub) => {
+        const popupContent = `<strong>${hub.name}</strong>`;
         new mapboxgl.Marker({ color: "#A389D4" })
           .setLngLat([hub.location.lng, hub.location.lat])
-          .setPopup(new mapboxgl.Popup().setHTML(`<strong>${hub.name}</strong>`))
+          .setPopup(new mapboxgl.Popup().setHTML(popupContent))
           .addTo(map!);
       });
 
       checkins.forEach((checkin) => {
+        const profile = checkin.profile;
+        const popupContent = profile
+          ? `<strong>${profile.displayName}</strong><br/><small>${checkin.status.toUpperCase()}</small>`
+          : `<strong>${checkin.userId}</strong>`;
         new mapboxgl.Marker({ color: "#F06292" })
           .setLngLat([checkin.location.lng, checkin.location.lat])
+          .setPopup(new mapboxgl.Popup().setHTML(popupContent))
           .addTo(map!);
       });
+
+      if (viewerLocation) {
+        new mapboxgl.Marker({ color: "#5AC8FA" })
+          .setLngLat([viewerLocation.lng, viewerLocation.lat])
+          .setPopup(new mapboxgl.Popup().setHTML(`<strong>${t("hub_geo_you_are_here")}</strong>`))
+          .addTo(map!);
+      }
     };
 
     void init();
@@ -50,7 +66,7 @@ export const Map = ({ hubs, checkins }: MapProps) => {
     return () => {
       map?.remove();
     };
-  }, [token, hubs, checkins]);
+  }, [token, hubs, checkins, viewerLocation, t]);
 
   if (!token) {
     return (

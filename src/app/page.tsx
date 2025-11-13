@@ -1,21 +1,78 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { ArrowRight, MapPin, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { AvatarCard } from "@/components/AvatarCard";
 import { ArtworkCard } from "@/components/ArtworkCard";
-import { sampleUsers, sampleArtworks } from "@/lib/sample-data";
 import { useI18n } from "@/context/i18n";
 import { useSessionState } from "@/context/session";
+import { getBackend } from "@/lib/backend";
+import type { Artwork, User } from "@/lib/types";
 
-const featuredUsers = sampleUsers.slice(0, 3);
-const featuredArtworks = sampleArtworks.slice(0, 3);
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export default function Home() {
   const { t } = useI18n();
   const sessionUser = useSessionState((state) => state.user);
+
+  const [creatives, setCreatives] = useState<User[]>([]);
+  const [creativesLoading, setCreativesLoading] = useState(true);
+  const [creativeError, setCreativeError] = useState<string | null>(null);
+
+  const [listings, setListings] = useState<Artwork[]>([]);
+  const [listingsLoading, setListingsLoading] = useState(true);
+  const [listingError, setListingError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    (async () => {
+      try {
+        const backend = getBackend();
+        const users = await backend.users.list({});
+        if (!active) return;
+        const curated = users
+          .filter((user) => UUID_PATTERN.test(user.userId))
+          .sort((a, b) => b.joinedAt - a.joinedAt)
+          .slice(0, 3);
+        setCreatives(curated);
+      } catch (error) {
+        console.error("[home] failed to load creatives", error);
+        if (active) setCreativeError("Unable to load member profiles right now.");
+      } finally {
+        if (active) setCreativesLoading(false);
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    (async () => {
+      try {
+        const backend = getBackend();
+        const artworkEntries = await backend.marketplace.list({});
+        if (!active) return;
+        const curated = artworkEntries
+          .filter((artwork) => UUID_PATTERN.test(artwork.artworkId))
+          .sort((a, b) => b.createdAt - a.createdAt)
+          .slice(0, 3);
+        setListings(curated);
+      } catch (error) {
+        console.error("[home] failed to load listings", error);
+        if (active) setListingError("Unable to load marketplace listings right now.");
+      } finally {
+        if (active) setListingsLoading(false);
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, []);
 
   return (
     <div className="flex min-h-screen flex-col gap-16 px-6 py-12">
@@ -55,12 +112,12 @@ export default function Home() {
           <CardContent className="grid gap-4 p-6">
             <h2 className="text-xl font-semibold text-white">Core flows in one dashboard</h2>
             <ul className="grid gap-3 text-sm text-muted-foreground md:grid-cols-2">
-              <li>✅ Verified profiles & portfolios</li>
-              <li>✅ Mapbox-powered hub map</li>
-              <li>✅ AI smart matching with Genkit stubs</li>
-              <li>✅ Stripe-ready marketplace</li>
-              <li>✅ Real-time messaging scaffolding</li>
-              <li>✅ Events, rewards, and admin queues</li>
+              <li>�o. Verified profiles & portfolios</li>
+              <li>�o. Mapbox-powered hub map</li>
+              <li>�o. AI smart matching with Genkit stubs</li>
+              <li>�o. Stripe-ready marketplace</li>
+              <li>�o. Real-time messaging scaffolding</li>
+              <li>�o. Events, rewards, and admin queues</li>
             </ul>
             <Button variant="ghost" className="w-fit" asChild>
               <Link href="/matcher">
@@ -93,10 +150,15 @@ export default function Home() {
             <Link href="/profiles">{t("profiles_view_all")}</Link>
           </Button>
         </div>
-        <div className="flex flex-wrap gap-6">
-          {featuredUsers.map((user) => (
-            <AvatarCard key={user.userId} user={user} />
-          ))}
+        <div className="flex min-h-[180px] flex-wrap gap-6">
+          {creativesLoading && <p className="text-sm text-muted-foreground">Loading verified creatives...</p>}
+          {!creativesLoading && creativeError && <p className="text-sm text-destructive">{creativeError}</p>}
+          {!creativesLoading && !creativeError && creatives.length === 0 && (
+            <p className="text-sm text-muted-foreground">No member profiles are live yet.</p>
+          )}
+          {!creativesLoading &&
+            !creativeError &&
+            creatives.map((user) => <AvatarCard key={user.userId} user={user} />)}
         </div>
       </section>
 
@@ -107,10 +169,15 @@ export default function Home() {
             <Link href="/marketplace">Browse marketplace</Link>
           </Button>
         </div>
-        <div className="grid gap-6 md:grid-cols-3">
-          {featuredArtworks.map((artwork) => (
-            <ArtworkCard key={artwork.artworkId} artwork={artwork} />
-          ))}
+        <div className="grid min-h-[220px] gap-6 md:grid-cols-3">
+          {listingsLoading && <p className="text-sm text-muted-foreground">Loading marketplace listings...</p>}
+          {!listingsLoading && listingError && <p className="text-sm text-destructive">{listingError}</p>}
+          {!listingsLoading && !listingError && listings.length === 0 && (
+            <p className="text-sm text-muted-foreground">No marketplace drops have been published yet.</p>
+          )}
+          {!listingsLoading &&
+            !listingError &&
+            listings.map((artwork) => <ArtworkCard key={artwork.artworkId} artwork={artwork} />)}
         </div>
       </section>
     </div>

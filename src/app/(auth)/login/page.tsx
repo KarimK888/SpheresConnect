@@ -35,8 +35,29 @@ export default function LoginPage() {
 
   const onSubmit = handleSubmit(async ({ email, password }) => {
     try {
-      await login(email, password);
+      const signedInUser = await login(email, password);
       setError(null);
+      const hasProfile =
+        Boolean(signedInUser.profile) ||
+        Boolean(signedInUser.bio?.trim()) ||
+        (signedInUser.skills?.length ?? 0) > 0 ||
+        Boolean(signedInUser.profilePictureUrl);
+      if (!hasProfile) {
+        try {
+          const response = await fetch("/api/profile-invite", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ email, name: signedInUser.displayName ?? undefined })
+          });
+          const payload = await response.json().catch(() => null);
+          if (response.ok && payload?.token) {
+            router.push(`/create-profile?invite=${encodeURIComponent(payload.token)}`);
+            return;
+          }
+        } catch (error) {
+          console.warn("[login] unable to issue profile invite", error);
+        }
+      }
       router.push("/");
     } catch (err) {
       setError(err instanceof Error ? err.message : t("auth_login_error"));

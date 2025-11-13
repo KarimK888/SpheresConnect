@@ -117,6 +117,120 @@ export type Database = {
           created_at?: string;
         };
       };
+      match_actions: {
+        Row: {
+          id: string;
+          user_id: string;
+          target_id: string;
+          action: "connected" | "skipped";
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          user_id: string;
+          target_id: string;
+          action: "connected" | "skipped";
+          created_at?: string;
+        };
+        Update: {
+          target_id?: string;
+          action?: "connected" | "skipped";
+          created_at?: string;
+        };
+      };
+      profile_projects: {
+        Row: {
+          project_id: string;
+          user_id: string;
+          title: string;
+          summary: string | null;
+          link: string | null;
+          status: "draft" | "live" | null;
+          tags: string[] | null;
+          year: number | null;
+          created_at: string;
+        };
+        Insert: {
+          project_id?: string;
+          user_id: string;
+          title: string;
+          summary?: string | null;
+          link?: string | null;
+          status?: "draft" | "live" | null;
+          tags?: string[] | null;
+          year?: number | null;
+          created_at?: string;
+        };
+        Update: {
+          title?: string;
+          summary?: string | null;
+          link?: string | null;
+          status?: "draft" | "live" | null;
+          tags?: string[] | null;
+          year?: number | null;
+          created_at?: string;
+        };
+      };
+      profile_media: {
+        Row: {
+          media_id: string;
+          user_id: string;
+          project_id: string | null;
+          type: "image" | "video" | "document";
+          title: string | null;
+          description: string | null;
+          url: string;
+          thumbnail_url: string | null;
+          tags: string[] | null;
+          created_at: string;
+        };
+        Insert: {
+          media_id?: string;
+          user_id: string;
+          project_id?: string | null;
+          type: "image" | "video" | "document";
+          title?: string | null;
+          description?: string | null;
+          url: string;
+          thumbnail_url?: string | null;
+          tags?: string[] | null;
+          created_at?: string;
+        };
+        Update: {
+          project_id?: string | null;
+          type?: "image" | "video" | "document";
+          title?: string | null;
+          description?: string | null;
+          url?: string;
+          thumbnail_url?: string | null;
+          tags?: string[] | null;
+          created_at?: string;
+        };
+      };
+      profile_socials: {
+        Row: {
+          social_id: string;
+          user_id: string;
+          platform: string;
+          handle: string | null;
+          url: string | null;
+          created_at: string;
+        };
+        Insert: {
+          social_id?: string;
+          user_id: string;
+          platform: string;
+          handle?: string | null;
+          url?: string | null;
+          created_at?: string;
+        };
+        Update: {
+          platform?: string;
+          handle?: string | null;
+          url?: string | null;
+          created_at?: string;
+        };
+      };
       messages: {
         Row: {
           message_id: string;
@@ -266,6 +380,70 @@ export type Database = {
           created_at?: string;
         };
       };
+      order_milestones: {
+        Row: {
+          milestone_id: string;
+          order_id: string;
+          title: string;
+          amount: number;
+          due_date: string | null;
+          status: "pending" | "submitted" | "approved" | "paid";
+          created_at: string;
+          updated_at: string | null;
+        };
+        Insert: {
+          milestone_id?: string;
+          order_id: string;
+          title: string;
+          amount: number;
+          due_date?: string | null;
+          status?: "pending" | "submitted" | "approved" | "paid";
+          created_at?: string;
+          updated_at?: string | null;
+        };
+        Update: {
+          title?: string;
+          amount?: number;
+          due_date?: string | null;
+          status?: "pending" | "submitted" | "approved" | "paid";
+          created_at?: string;
+          updated_at?: string | null;
+        };
+      };
+      payouts: {
+        Row: {
+          payout_id: string;
+          order_id: string;
+          milestone_id: string | null;
+          payee_id: string;
+          amount: number;
+          currency: string;
+          status: "initiated" | "processing" | "paid" | "failed";
+          metadata: Record<string, unknown> | null;
+          created_at: string;
+        };
+        Insert: {
+          payout_id?: string;
+          order_id: string;
+          milestone_id?: string | null;
+          payee_id: string;
+          amount: number;
+          currency?: string;
+          status?: "initiated" | "processing" | "paid" | "failed";
+          metadata?: Record<string, unknown> | null;
+          created_at?: string;
+        };
+        Update: {
+          order_id?: string;
+          milestone_id?: string | null;
+          payee_id?: string;
+          amount?: number;
+          currency?: string;
+          status?: "initiated" | "processing" | "paid" | "failed";
+          metadata?: Record<string, unknown> | null;
+          created_at?: string;
+        };
+      };
       events: {
         Row: {
           event_id: string;
@@ -298,6 +476,149 @@ export type Database = {
           host_user_id?: string;
           attendees?: string[] | null;
           created_at?: string;
+        };
+      };
+      notifications: {
+        Row: {
+          notification_id: string;
+          user_id: string;
+          kind: string;
+          title: string;
+          body: string | null;
+          link: string | null;
+          link_label: string | null;
+          secondary_link: string | null;
+          secondary_link_label: string | null;
+          metadata: Record<string, unknown> | null;
+          created_at: string;
+          read_at: string | null;
+        };
+        Insert: {
+          notification_id?: string;
+          user_id: string;
+          kind?: string;
+          title: string;
+          body?: string | null;
+          link?: string | null;
+          link_label?: string | null;
+          secondary_link?: string | null;
+          secondary_link_label?: string | null;
+          metadata?: Record<string, unknown> | null;
+          created_at?: string;
+          read_at?: string | null;
+        };
+        Update: {
+          kind?: string;
+          title?: string;
+          body?: string | null;
+          link?: string | null;
+          link_label?: string | null;
+          secondary_link?: string | null;
+          secondary_link_label?: string | null;
+          metadata?: Record<string, unknown> | null;
+          created_at?: string;
+          read_at?: string | null;
+        };
+      };
+      verification_requests: {
+        Row: {
+          request_id: string;
+          user_id: string;
+          portfolio_url: string | null;
+          statement: string | null;
+          status: "pending" | "approved" | "rejected";
+          reviewer_id: string | null;
+          reviewed_at: string | null;
+          notes: string | null;
+          created_at: string;
+        };
+        Insert: {
+          request_id?: string;
+          user_id: string;
+          portfolio_url?: string | null;
+          statement?: string | null;
+          status?: "pending" | "approved" | "rejected";
+          reviewer_id?: string | null;
+          reviewed_at?: string | null;
+          notes?: string | null;
+          created_at?: string;
+        };
+        Update: {
+          portfolio_url?: string | null;
+          statement?: string | null;
+          status?: "pending" | "approved" | "rejected";
+          reviewer_id?: string | null;
+          reviewed_at?: string | null;
+          notes?: string | null;
+          created_at?: string;
+        };
+      };
+      moderation_queue: {
+        Row: {
+          queue_id: string;
+          resource_type: string;
+          resource_id: string;
+          reported_by: string | null;
+          reason: string | null;
+          status: "open" | "in_review" | "resolved";
+          reviewer_id: string | null;
+          reviewed_at: string | null;
+          resolution: string | null;
+          created_at: string;
+        };
+        Insert: {
+          queue_id?: string;
+          resource_type: string;
+          resource_id: string;
+          reported_by?: string | null;
+          reason?: string | null;
+          status?: "open" | "in_review" | "resolved";
+          reviewer_id?: string | null;
+          reviewed_at?: string | null;
+          resolution?: string | null;
+          created_at?: string;
+        };
+        Update: {
+          resource_type?: string;
+          resource_id?: string;
+          reported_by?: string | null;
+          reason?: string | null;
+          status?: "open" | "in_review" | "resolved";
+          reviewer_id?: string | null;
+          reviewed_at?: string | null;
+          resolution?: string | null;
+          created_at?: string;
+        };
+      };
+      support_tickets: {
+        Row: {
+          ticket_id: string;
+          user_id: string | null;
+          subject: string;
+          body: string | null;
+          status: "open" | "in_progress" | "closed";
+          assigned_to: string | null;
+          created_at: string;
+          updated_at: string | null;
+        };
+        Insert: {
+          ticket_id?: string;
+          user_id?: string | null;
+          subject: string;
+          body?: string | null;
+          status?: "open" | "in_progress" | "closed";
+          assigned_to?: string | null;
+          created_at?: string;
+          updated_at?: string | null;
+        };
+        Update: {
+          user_id?: string | null;
+          subject?: string;
+          body?: string | null;
+          status?: "open" | "in_progress" | "closed";
+          assigned_to?: string | null;
+          created_at?: string;
+          updated_at?: string | null;
         };
       };
     };

@@ -46,7 +46,13 @@ export async function PUT(request: Request) {
     return NextResponse.json({ error: { code: "VALIDATION_ERROR", message: "Missing eventId" } }, { status: 400 });
   }
   const payload = EventUpdateSchema.parse(await request.json());
-  const event = await backend.events.update({ eventId, data: payload });
+  const normalized = {
+    ...payload,
+    description: payload.description ?? undefined,
+    endsAt: payload.endsAt ?? undefined,
+    location: payload.location ?? undefined
+  };
+  const event = await backend.events.update({ eventId, data: normalized });
   return NextResponse.json(event);
 }
 

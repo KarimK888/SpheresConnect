@@ -28,7 +28,7 @@ const useSessionStore = create<SessionStoreState>((set) => ({
 interface SessionContextValue {
   user: User | null;
   loading: boolean;
-  login: (email: string, password: string) => Promise<void>;
+  login: (email: string, password: string) => Promise<User>;
   logout: () => Promise<void>;
   refresh: () => Promise<void>;
 }
@@ -64,6 +64,7 @@ export const SessionProvider = ({ children }: { children: React.ReactNode }) => 
       const backend = getBackend();
       const session = await backend.auth.login({ email, password });
       setUser(session.user);
+      return session.user;
     },
     [setUser]
   );

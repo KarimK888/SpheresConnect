@@ -23,10 +23,13 @@ type FormValues = {
 
 export default function SignupPage() {
   const { t } = useI18n();
+  const router = useRouter();
   const backend = getBackend();
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
-  const router = useRouter();
+  const [sendingInvite, setSendingInvite] = useState(false);
+  const [inviteEmail, setInviteEmail] = useState<string | null>(null);
+  const [inviteToken, setInviteToken] = useState<string | null>(null);
 
   const schema = useMemo(
     () =>
@@ -45,17 +48,34 @@ export default function SignupPage() {
   } = useForm<FormValues>({ resolver: zodResolver(schema) });
 
   const onSubmit = handleSubmit(async ({ email, password, name }) => {
+    setSendingInvite(true);
+    setError(null);
+    setSuccess(false);
+    setInviteEmail(null);
+    setInviteToken(null);
     try {
       const session = await backend.auth.signup({ email, password });
       await backend.users.update(session.user.userId, {
         displayName: name
       });
+      const response = await fetch("/api/profile-invite", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, name })
+      });
+      const payload = await response.json().catch(() => null);
+      if (!response.ok || !payload?.token) {
+        throw new Error(payload?.error ?? t("auth_signup_invite_error"));
+      }
+      setInviteEmail(email);
+      setInviteToken(payload.token);
       setSuccess(true);
       setError(null);
-      router.push("/login");
     } catch (err) {
       setSuccess(false);
       setError(err instanceof Error ? err.message : t("auth_signup_error"));
+    } finally {
+      setSendingInvite(false);
     }
   });
 
@@ -99,8 +119,25 @@ export default function SignupPage() {
               {errors.password && <p className="text-xs text-accent">{errors.password.message}</p>}
             </div>
             {error && <p className="text-xs text-accent">{error}</p>}
-            {success && <p className="text-xs text-primary">{t("auth_signup_success")}</p>}
-            <Button type="submit" className="w-full">
+            {success && inviteEmail && (
+              <div className="space-y-3 rounded-2xl border border-primary/40 bg-primary/5 p-3 text-xs text-primary">
+                <p>{t("auth_signup_invite_sent", { email: inviteEmail })}</p>
+                <p>{t("auth_signup_invite_help")}</p>
+                {inviteToken && (
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    onClick={() => router.push(`/create-profile?invite=${encodeURIComponent(inviteToken)}`)}
+                  >
+                    {t("auth_signup_invite_cta")}
+                  </Button>
+                )}
+                <Button variant="link" className="p-0 text-xs" asChild>
+                  <Link href="/login">{t("auth_signup_login_link")}</Link>
+                </Button>
+              </div>
+            )}
+            <Button type="submit" className="w-full" disabled={sendingInvite}>
               {t("auth_signup_submit")}
             </Button>
           </form>

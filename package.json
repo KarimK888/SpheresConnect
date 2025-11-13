@@ -9,13 +9,14 @@
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "seed": "ts-node scripts/seed.ts"
+    "seed": "ts-node scripts/seed.ts",
+    "export:supabase": "ts-node scripts/export-supabase-seed.ts"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.9.0",
-    "@supabase/supabase-js": "^2.46.0",
     "@radix-ui/react-slot": "^1.0.2",
     "@stripe/stripe-js": "^4.10.0",
+    "@supabase/supabase-js": "^2.46.0",
     "class-variance-authority": "^0.7.0",
     "clsx": "^2.1.1",
     "firebase": "^11.0.2",
@@ -44,6 +45,7 @@
     "eslint": "^9",
     "eslint-config-next": "15.2.0",
     "postcss": "^8.4.49",
+    "supabase": "^2.58.5",
     "tailwindcss": "^3.4.15",
     "ts-node": "^10.9.2",
     "typescript": "^5.6.3",

@@ -4,6 +4,9 @@ import { getBackend } from "@/lib/backend";
 import { CheckinSchema } from "@/lib/validation";
 
 const nearSchema = z.object({ lat: z.coerce.number(), lng: z.coerce.number() });
+const checkinRequestSchema = CheckinSchema.extend({
+  userId: z.string().optional()
+});
 
 export async function GET(request: Request) {
   const backend = getBackend();
@@ -17,11 +20,12 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   const backend = getBackend();
-  const payload = CheckinSchema.parse(await request.json());
+  const payload = checkinRequestSchema.parse(await request.json());
   const session = await backend.auth.getSession();
-  if (!session) {
+  const userId = session?.user.userId ?? payload.userId;
+  if (!userId) {
     return NextResponse.json({ error: { code: "UNAUTHORIZED", message: "Login required" } }, { status: 401 });
   }
-  const checkin = await backend.checkins.create({ ...payload, userId: session.user.userId });
+  const checkin = await backend.checkins.create({ ...payload, userId });
   return NextResponse.json(checkin, { status: 201 });
 }

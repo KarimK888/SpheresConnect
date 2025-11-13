@@ -1,6 +1,7 @@
 ﻿"use client";
 
 import {
+  Suspense,
   useCallback,
   useEffect,
   useMemo,
@@ -10,7 +11,7 @@ import {
   type KeyboardEvent,
   type SetStateAction
 } from "react";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   Archive,
   BellOff,
@@ -105,11 +106,12 @@ const resolveAttachmentType = (file: File): ChatAttachment["type"] => {
   return "document";
 };
 
-export default function MessagesPage() {
+const MessagesPageContent = () => {
   const { user, isAuthenticated } = useAuth();
   const { t } = useI18n();
   const backend = useMemo(() => getBackend(), []);
   const searchParams = useSearchParams();
+  const router = useRouter();
   const chatParam = searchParams?.get("chat") ?? null;
 
   const [directory, setDirectory] = useState<Directory>({});
@@ -131,6 +133,21 @@ export default function MessagesPage() {
   const [draftPoll, setDraftPoll] = useState<DraftPoll>({ question: "", options: [] });
   const [pinnedChats, setPinnedChats] = useState<string[]>([]);
   const [reactionPickerFor, setReactionPickerFor] = useState<string | null>(null);
+  const [newChatOpen, setNewChatOpen] = useState(false);
+  const [newChatQuery, setNewChatQuery] = useState("");
+  const [newChatResults, setNewChatResults] = useState<User[]>([]);
+  const [newChatLoading, setNewChatLoading] = useState(false);
+  const [newChatError, setNewChatError] = useState<string | null>(null);
+  const [participantManagerOpen, setParticipantManagerOpen] = useState(false);
+  const [detailView, setDetailView] = useState<"timeline" | "moderation">("timeline");
+  const [headerNotice, setHeaderNotice] = useState<string | null>(null);
+  const [qrShareLink, setQrShareLink] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!headerNotice) return;
+    const timer = setTimeout(() => setHeaderNotice(null), 4000);
+    return () => clearTimeout(timer);
+  }, [headerNotice]);
   const [showArchived, setShowArchived] = useState(false);
   const [chatBusy, setChatBusy] = useState<string | null>(null);
   const mutedChats = useNotifications((state) => state.mutedChats);
@@ -140,7 +157,14 @@ export default function MessagesPage() {
 
   const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
-  const selectedParticipants = selectedChatId ? participantsByChat[selectedChatId] ?? [] : [];
+  const selectedParticipants = useMemo(
+    () => (selectedChatId ? participantsByChat[selectedChatId] ?? [] : []),
+    [participantsByChat, selectedChatId]
+  );
+  const manageableParticipants = useMemo(
+    () => selectedParticipants.filter((participant) => participant.userId !== user?.userId),
+    [selectedParticipants, user?.userId]
+  );
 
   useEffect(() => {
     const loadDirectory = async () => {
@@ -199,6 +223,50 @@ export default function MessagesPage() {
     if (!selectedChatId) return;
     void loadMessages(selectedChatId);
   }, [loadMessages, selectedChatId]);
+
+  useEffect(() => {
+    if (!newChatOpen) {
+      setNewChatResults([]);
+      setNewChatError(null);
+      return;
+    }
+    const term = newChatQuery.trim();
+    if (term.length < 2) {
+      setNewChatResults([]);
+      setNewChatError(null);
+      return;
+    }
+    let active = true;
+    setNewChatLoading(true);
+    setNewChatError(null);
+    backend.users
+      .list({ query: term })
+      .then((users) => {
+        if (!active) return;
+        const filtered = users.filter((candidate) => candidate.userId !== user?.userId);
+        setDirectory((prev) => {
+          const next = { ...prev };
+          filtered.forEach((person) => {
+            next[person.userId] = person;
+          });
+          return next;
+        });
+        setNewChatResults(filtered);
+      })
+      .catch((error) => {
+        if (!active) return;
+        setNewChatResults([]);
+        setNewChatError(error instanceof Error ? error.message : t("messages_new_chat_error"));
+      })
+      .finally(() => {
+        if (active) {
+          setNewChatLoading(false);
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, [backend.users, newChatOpen, newChatQuery, t, user?.userId]);
 
   useEffect(() => {
     const hydrateParticipants = async () => {
@@ -358,6 +426,71 @@ export default function MessagesPage() {
     setReactionPickerFor(null);
   };
 
+  const ensureChatParticipants = useCallback(
+    async (chat: Chat) => {
+      const members = await Promise.all(chat.memberIds.map((id) => backend.users.get(id)));
+      const resolved = members.filter((value): value is User => Boolean(value));
+      if (resolved.length) {
+        setDirectory((prev) => {
+          const next = { ...prev };
+          resolved.forEach((person) => {
+            next[person.userId] = person;
+          });
+          return next;
+        });
+        setParticipantsByChat((prev) => ({ ...prev, [chat.chatId]: resolved }));
+      }
+    },
+    [backend.users]
+  );
+
+  const handleStartChatWithUser = useCallback(
+    async (target: User) => {
+      if (!user) return;
+      setNewChatError(null);
+      setNewChatLoading(true);
+      try {
+        const existing = chats.find(
+          (chat) =>
+            !chat.isGroup &&
+            chat.memberIds.length === 2 &&
+            chat.memberIds.includes(user.userId) &&
+            chat.memberIds.includes(target.userId)
+        );
+        const chat =
+          existing ??
+          (await backend.messages.createChat({
+            memberIds: Array.from(new Set([user.userId, target.userId])),
+            isGroup: false
+          }));
+        setChats((prev) => {
+          if (existing) {
+            return prev;
+          }
+          return [chat, ...prev];
+        });
+        await ensureChatParticipants(chat);
+        setSelectedChatId(chat.chatId);
+        setNewChatOpen(false);
+        setNewChatQuery("");
+        setNewChatResults([]);
+      } catch (error) {
+        setNewChatError(error instanceof Error ? error.message : t("messages_new_chat_error"));
+      } finally {
+        setNewChatLoading(false);
+      }
+    },
+    [backend.messages, chats, ensureChatParticipants, t, user]
+  );
+
+  const handleViewParticipant = useCallback(
+    (participantId: string) => {
+      setParticipantManagerOpen(false);
+      router.push(`/profile/${participantId}?from=messages`);
+    },
+    [router]
+  );
+
   useEffect(() => {
     if (selectedChatId) {
       setActiveNotificationThread(selectedChatId);
@@ -371,54 +504,60 @@ export default function MessagesPage() {
     setPinnedChats((prev) => (prev.includes(chatId) ? prev.filter((id) => id !== chatId) : [...prev, chatId]));
   };
 
-  const handleArchiveChat = async (chatId: string, archived: boolean) => {
-    if (!user) return;
-    setChatBusy(chatId);
-    try {
-      const updated = await backend.messages.archiveChat({ chatId, userId: user.userId, archived });
-      setChats((prev) => {
-        const next = prev.map((chat) =>
-          chat.chatId === chatId ? { ...chat, archivedBy: updated.archivedBy } : chat
-        );
-        if (!showArchived && archived && selectedChatId === chatId) {
-          const fallback = next.find(
-            (chat) => !chat.archivedBy.includes(user.userId) && chat.chatId !== chatId
+  const handleArchiveChat = useCallback(
+    async (chatId: string, archived: boolean) => {
+      if (!user) return;
+      setChatBusy(chatId);
+      try {
+        const updated = await backend.messages.archiveChat({ chatId, userId: user.userId, archived });
+        setChats((prev) => {
+          const next = prev.map((chat) =>
+            chat.chatId === chatId ? { ...chat, archivedBy: updated.archivedBy } : chat
           );
-          setSelectedChatId(fallback?.chatId ?? null);
-        }
-        return next;
-      });
-    } finally {
-      setChatBusy(null);
-    }
-  };
+          if (!showArchived && archived && selectedChatId === chatId) {
+            const fallback = next.find(
+              (chat) => !chat.archivedBy.includes(user.userId) && chat.chatId !== chatId
+            );
+            setSelectedChatId(fallback?.chatId ?? null);
+          }
+          return next;
+        });
+      } finally {
+        setChatBusy(null);
+      }
+    },
+    [backend.messages, selectedChatId, showArchived, user]
+  );
 
-  const handleDeleteChat = async (chatId: string) => {
-    if (!user) return;
-    setChatBusy(chatId);
-    try {
-      await backend.messages.removeChat({ chatId, userId: user.userId });
-      setChats((prev) => {
-        const next = prev.filter((chat) => chat.chatId !== chatId);
-        if (selectedChatId === chatId) {
-          setSelectedChatId(next[0]?.chatId ?? null);
-        }
-        return next;
-      });
-      setParticipantsByChat((prev) => {
-        const next = { ...prev };
-        delete next[chatId];
-        return next;
-      });
-      setMessagesByChat((prev) => {
-        const next = { ...prev };
-        delete next[chatId];
-        return next;
-      });
-    } finally {
-      setChatBusy(null);
-    }
-  };
+  const handleDeleteChat = useCallback(
+    async (chatId: string) => {
+      if (!user) return;
+      setChatBusy(chatId);
+      try {
+        await backend.messages.removeChat({ chatId, userId: user.userId });
+        setChats((prev) => {
+          const next = prev.filter((chat) => chat.chatId !== chatId);
+          if (selectedChatId === chatId) {
+            setSelectedChatId(next[0]?.chatId ?? null);
+          }
+          return next;
+        });
+        setParticipantsByChat((prev) => {
+          const next = { ...prev };
+          delete next[chatId];
+          return next;
+        });
+        setMessagesByChat((prev) => {
+          const next = { ...prev };
+          delete next[chatId];
+          return next;
+        });
+      } finally {
+        setChatBusy(null);
+      }
+    },
+    [backend.messages, selectedChatId, user]
+  );
 
   const handleClearPinned = async () => {
     if (!user || !selectedChatId || !pinnedMessages.length) return;
@@ -540,15 +679,55 @@ export default function MessagesPage() {
     });
   };
 
-  const handlePinMessage = async (message: ChatMessage, pinned: boolean) => {
-    if (!user || !selectedChatId) return;
-    await backend.messages.pin({
-      chatId: selectedChatId,
-      messageId: message.messageId,
-      pinned,
-      userId: user.userId
-    });
-  };
+const handlePinMessage = async (message: ChatMessage, pinned: boolean) => {
+  if (!user || !selectedChatId) return;
+  await backend.messages.pin({
+    chatId: selectedChatId,
+    messageId: message.messageId,
+    pinned,
+    userId: user.userId
+  });
+};
+
+const getChatLink = useCallback(() => {
+    if (typeof window === "undefined" || !selectedChatId) return null;
+    return `${window.location.origin}/messages?chat=${selectedChatId}`;
+  }, [selectedChatId]);
+
+  const handleShareLink = useCallback(async () => {
+    const link = getChatLink();
+    if (!link) return;
+    try {
+      await navigator.clipboard.writeText(link);
+      setHeaderNotice(t("messages_link_copied"));
+    } catch {
+      setHeaderNotice(link);
+    }
+  }, [getChatLink, t]);
+
+  const handleOpenQrPanel = useCallback(() => {
+    const link = getChatLink();
+    if (!link) return;
+    setQrShareLink(link);
+}, [getChatLink]);
+
+  const handleModerationMute = useCallback(() => {
+    if (!selectedChatId) return;
+    toggleNotificationsForChat(selectedChatId);
+    setHeaderNotice(
+      mutedChats.includes(selectedChatId) ? t("messages_notifications_on") : t("messages_notifications_off")
+    );
+  }, [mutedChats, selectedChatId, t, toggleNotificationsForChat]);
+
+  const handleModerationArchive = useCallback(() => {
+    if (!selectedChatId) return;
+    void handleArchiveChat(selectedChatId, true);
+  }, [handleArchiveChat, selectedChatId]);
+
+  const handleModerationDelete = useCallback(() => {
+    if (!selectedChatId) return;
+    void handleDeleteChat(selectedChatId);
+  }, [handleDeleteChat, selectedChatId]);
 
   const visibleChats = useMemo<SidebarChat[]>(() => {
     const normalized = chatSearch.trim().toLowerCase();
@@ -620,6 +799,20 @@ export default function MessagesPage() {
 
   const composerDisabled = !selectedChatId;
 
+  const timelineEntries = useMemo(() => {
+    if (!selectedChatId) return [];
+    const list = messagesByChat[selectedChatId] ?? [];
+    return list
+      .slice(-5)
+      .reverse()
+      .map((message) => ({
+        id: message.messageId,
+        author: directory[message.senderId]?.displayName ?? message.senderId,
+        preview: message.content ?? t("messages_attachment"),
+        at: formatTimestamp(message.createdAt)
+      }));
+  }, [directory, messagesByChat, selectedChatId, t]);
+
   if (!isAuthenticated || !user) {
     return (
       <div className="mx-auto flex w-full max-w-4xl flex-col items-center gap-4 px-6 py-10">
@@ -632,6 +825,7 @@ export default function MessagesPage() {
   }
 
   return (
+    <>
     <div className="mx-auto flex h-[calc(100vh-160px)] w-full max-w-6xl gap-4 px-6 py-8">
       <aside className="flex w-72 flex-shrink-0 flex-col gap-4 rounded-2xl border border-border/60 bg-card/70 p-4">
         <div className="flex items-center justify-between">
@@ -761,15 +955,53 @@ export default function MessagesPage() {
         <Button
           variant="outline"
           className="w-full"
-          onClick={async () => {
-            const chat = await backend.messages.createChat({ memberIds: [user.userId], isGroup: false });
-            setChats((prev) => [chat, ...prev]);
-            setSelectedChatId(chat.chatId);
-          }}
+          onClick={() => setNewChatOpen((value) => !value)}
         >
           <UserPlus className="mr-2 h-4 w-4" />
           {t("messages_new_chat")}
         </Button>
+        {newChatOpen && (
+          <Card className="space-y-3 border-border/60 bg-card/80 p-3 text-sm text-muted-foreground">
+            <div className="flex items-center gap-2">
+              <Input
+                value={newChatQuery}
+                onChange={(event) => setNewChatQuery(event.target.value)}
+                placeholder={t("messages_new_chat_placeholder")}
+                className="flex-1"
+              />
+              <Button variant="ghost" size="sm" onClick={() => setNewChatOpen(false)}>
+                {t("messages_new_chat_close")}
+              </Button>
+            </div>
+            {newChatError && <p className="text-xs text-destructive">{newChatError}</p>}
+            <div className="max-h-64 space-y-2 overflow-auto">
+              {newChatLoading && <p className="text-xs">{t("generic_loading")}</p>}
+              {!newChatLoading && newChatQuery.trim().length < 2 && (
+                <p className="text-xs">{t("messages_new_chat_hint")}</p>
+              )}
+              {!newChatLoading &&
+                newChatQuery.trim().length >= 2 &&
+                newChatResults.map((candidate) => (
+                  <button
+                    type="button"
+                    key={candidate.userId}
+                    className="flex w-full items-center justify-between rounded-xl border border-border/40 bg-background/40 px-3 py-2 text-left text-xs text-white transition-colors hover:border-accent"
+                    onClick={() => handleStartChatWithUser(candidate)}
+                  >
+                    <span className="flex flex-col">
+                      <span className="font-semibold">{candidate.displayName}</span>
+                      <span className="text-[11px] text-muted-foreground">{candidate.email}</span>
+                    </span>
+                    <span className="text-accent">{t("messages_new_chat_select")}</span>
+                  </button>
+                ))}
+              {!newChatLoading &&
+                newChatQuery.trim().length >= 2 &&
+                !newChatResults.length &&
+                !newChatError && <p className="text-xs">{t("messages_new_chat_no_results")}</p>}
+            </div>
+          </Card>
+        )}
       </aside>
       <section className="flex min-w-0 flex-1 flex-col gap-4">
         {selectedChatId ? (
@@ -809,10 +1041,10 @@ export default function MessagesPage() {
                       )}
                     />
                   </Button>
-                  <Button variant="ghost" size="icon">
+                  <Button variant="ghost" size="icon" onClick={handleShareLink}>
                     <Share2 className="h-4 w-4" />
                   </Button>
-                  <Button variant="ghost" size="icon">
+                  <Button variant="ghost" size="icon" onClick={handleOpenQrPanel}>
                     <QrCode className="h-4 w-4" />
                   </Button>
                 </div>
@@ -827,15 +1059,65 @@ export default function MessagesPage() {
                     className="h-8 w-64 pl-8"
                   />
                 </div>
-                <Button variant="ghost" size="sm" className="gap-2 text-xs">
+                <Button
+                  variant={detailView === "timeline" ? "accent" : "ghost"}
+                  size="sm"
+                  className="gap-2 text-xs"
+                  onClick={() => setDetailView("timeline")}
+                >
                   <Calendar className="h-3 w-3" />
                   {t("messages_timeline")}
                 </Button>
-                <Button variant="ghost" size="sm" className="gap-2 text-xs">
+                <Button
+                  variant={detailView === "moderation" ? "accent" : "ghost"}
+                  size="sm"
+                  className="gap-2 text-xs"
+                  onClick={() => setDetailView("moderation")}
+                >
                   <Shield className="h-3 w-3" />
                   {t("messages_moderation")}
                 </Button>
               </div>
+              {headerNotice && (
+                <div className="rounded-full bg-accent/20 px-3 py-1 text-xs text-accent">{headerNotice}</div>
+              )}
+              {detailView === "timeline" ? (
+                <Card className="border-border/40 bg-border/10 p-3 text-xs text-muted-foreground">
+                  {timelineEntries.length ? (
+                    <ul className="space-y-2">
+                      {timelineEntries.map((entry) => (
+                        <li key={entry.id} className="flex items-center justify-between gap-2">
+                          <div className="flex-1">
+                            <p className="font-semibold text-white">{entry.author}</p>
+                            <p className="line-clamp-2">{entry.preview}</p>
+                          </div>
+                          <span className="text-[11px]">{entry.at}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p className="text-center text-[11px]">{t("messages_timeline_empty")}</p>
+                  )}
+                </Card>
+              ) : (
+                <Card className="border-border/40 bg-border/10 p-3 text-xs text-muted-foreground">
+                  <p className="mb-3">{t("messages_moderation_hint")}</p>
+                  <div className="flex flex-wrap gap-2">
+                    <Button size="sm" variant="outline" onClick={handleModerationMute}>
+                      {t("messages_moderation_toggle_mute")}
+                    </Button>
+                    <Button size="sm" variant="outline" onClick={handleModerationArchive}>
+                      {t("messages_moderation_archive")}
+                    </Button>
+                    <Button size="sm" variant="outline" onClick={handleModerationDelete} className="text-destructive border-destructive/60">
+                      {t("messages_moderation_delete")}
+                    </Button>
+                    <Button size="sm" variant="ghost" onClick={() => setParticipantManagerOpen(true)}>
+                      {t("messages_manage")}
+                    </Button>
+                  </div>
+                </Card>
+              )}
             </header>
             <div className="flex min-h-0 flex-1 gap-4">
               <div className="flex min-h-0 flex-1 flex-col gap-4 rounded-2xl border border-border/60 bg-card/60 p-4">
@@ -902,6 +1184,7 @@ export default function MessagesPage() {
           directory={directory}
           onUnpin={(message) => handlePinMessage(message, false)}
           onClearPinned={handleClearPinned}
+          onManageParticipants={() => setParticipantManagerOpen(true)}
         />
             </div>
           </>
@@ -912,6 +1195,72 @@ export default function MessagesPage() {
         )}
       </section>
     </div>
+    {participantManagerOpen && (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-4">
+        <Card className="w-full max-w-md space-y-4 border-border/80 bg-background/95 p-6 text-sm text-muted-foreground">
+          <div className="flex items-center justify-between text-xs uppercase tracking-[0.3em] text-muted-foreground">
+            <span>{t("messages_participants_manage_title")}</span>
+            <Button variant="ghost" size="sm" onClick={() => setParticipantManagerOpen(false)}>
+              {t("messages_qr_modal_close")}
+            </Button>
+          </div>
+          <p className="text-xs">{t("messages_participants_manage_hint")}</p>
+          <div className="max-h-64 space-y-3 overflow-auto">
+            {manageableParticipants.length ? (
+              manageableParticipants.map((participant) => (
+                <Card key={participant.userId} className="border-border/40 bg-background/60 p-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <p className="font-semibold text-white">{participant.displayName}</p>
+                      <p className="text-[11px] text-muted-foreground">{participant.email}</p>
+                    </div>
+                    <div className="flex gap-2">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => {
+                          navigator?.clipboard?.writeText(participant.userId).then(() => setHeaderNotice(t("messages_link_copied")));
+                        }}
+                      >
+                        {t("messages_copy_id")}
+                      </Button>
+                      <Button variant="outline" size="sm" onClick={() => handleViewParticipant(participant.userId)}>
+                        {t("messages_participants_view_profile")}
+                      </Button>
+                    </div>
+                  </div>
+                </Card>
+              ))
+            ) : (
+              <p className="text-center text-xs text-muted-foreground">{t("messages_participants_empty")}</p>
+            )}
+          </div>
+        </Card>
+      </div>
+    )}
+    {qrShareLink && (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-4">
+        <Card className="w-full max-w-md space-y-4 border-border/80 bg-background/95 p-6 text-sm text-muted-foreground">
+          <div className="flex items-center justify-between text-xs uppercase tracking-[0.3em] text-muted-foreground">
+            <span>{t("messages_qr_modal_title")}</span>
+            <Button variant="ghost" size="sm" onClick={() => setQrShareLink(null)}>
+              {t("messages_qr_modal_close")}
+            </Button>
+          </div>
+          <p>{t("messages_qr_modal_body")}</p>
+          <code className="block rounded-xl bg-border/30 p-3 text-xs text-white">{qrShareLink}</code>
+          <div className="flex gap-2">
+            <Button size="sm" onClick={() => navigator?.clipboard?.writeText(qrShareLink)}>
+              {t("messages_link_copied")}
+            </Button>
+            <Button size="sm" variant="outline" onClick={() => setQrShareLink(null)}>
+              {t("messages_qr_modal_close")}
+            </Button>
+          </div>
+        </Card>
+      </div>
+    )}
+    </>
   );
 }
 
@@ -1372,9 +1721,10 @@ interface RightRailProps {
   directory: Directory;
   onUnpin: (message: ChatMessage) => void;
   onClearPinned: () => void;
+  onManageParticipants: () => void;
 }
 
-function RightRail({ pinnedMessages, participants, directory, onUnpin, onClearPinned }: RightRailProps) {
+function RightRail({ pinnedMessages, participants, directory, onUnpin, onClearPinned, onManageParticipants }: RightRailProps) {
   const { t } = useI18n();
   return (
     <aside className="hidden w-80 flex-shrink-0 flex-col gap-4 rounded-2xl border border-border/60 bg-card/70 p-4 xl:flex">
@@ -1407,7 +1757,7 @@ function RightRail({ pinnedMessages, participants, directory, onUnpin, onClearPi
       <section className="space-y-3">
         <div className="flex items-center justify-between text-xs text-muted-foreground">
           <span>{t("messages_participants")}</span>
-          <button type="button" className="text-white">
+          <button type="button" className="text-white" onClick={onManageParticipants}>
             {t("messages_manage")}
           </button>
         </div>
@@ -1434,6 +1784,24 @@ function RightRail({ pinnedMessages, participants, directory, onUnpin, onClearPi
         </div>
       </section>
     </aside>
+  );
+}
+
+const MessagesFallback = () => (
+  <div className="mx-auto flex w-full max-w-6xl flex-col gap-4 px-6 py-12">
+    <div className="h-8 w-48 animate-pulse rounded-full bg-border/40" />
+    <div className="grid gap-4 lg:grid-cols-[320px_minmax(0,1fr)]">
+      <div className="h-96 animate-pulse rounded-3xl bg-border/20" />
+      <div className="h-96 animate-pulse rounded-3xl bg-border/20" />
+    </div>
+  </div>
+);
+
+export default function MessagesPage() {
+  return (
+    <Suspense fallback={<MessagesFallback />}>
+      <MessagesPageContent />
+    </Suspense>
   );
 }
 

@@ -188,12 +188,28 @@ export const ProfileClient = ({ user, listings, viewerId, onUserUpdated }: Profi
       router.push("/login");
       return;
     }
+    if (viewerId === profileUser.userId) {
+      setFeedback({ type: "error", message: t("profile_message_self_error") });
+      return;
+    }
     setMessaging(true);
     setFeedback(null);
     try {
-      const memberIds = Array.from(new Set([viewerId, profileUser.userId]));
-      const chat = await backend.messages.createChat({ memberIds, isGroup: false });
-      router.push(`/messages?chatId=${chat.chatId}`);
+      const existingChats = await backend.messages.listChats({ userId: viewerId });
+      const existing = existingChats.find(
+        (chat) =>
+          !chat.isGroup &&
+          chat.memberIds.length === 2 &&
+          chat.memberIds.includes(viewerId) &&
+          chat.memberIds.includes(profileUser.userId)
+      );
+      const chat =
+        existing ??
+        (await backend.messages.createChat({
+          memberIds: Array.from(new Set([viewerId, profileUser.userId])),
+          isGroup: false
+        }));
+      router.push(`/messages?chat=${chat.chatId}`);
     } catch (error) {
       setFeedback({
         type: "error",

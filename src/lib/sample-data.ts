@@ -5,6 +5,7 @@ import type {
   Checkin,
   Event,
   Hub,
+  MatchAction,
   Order,
   RewardLog,
   User,
@@ -548,6 +549,24 @@ export const sampleRewardLogs: RewardLog[] = [
   }
 ];
 
+export const sampleMatchActions: MatchAction[] = [
+  {
+    id: "mat_usr_alina_usr_bastien",
+    userId: "usr_alina",
+    targetId: "usr_bastien",
+    action: "connected",
+    createdAt: now - 1000 * 60 * 15
+  },
+  {
+    id: "mat_usr_cyrus_usr_elio",
+    userId: "usr_cyrus",
+    targetId: "usr_elio",
+    action: "skipped",
+    createdAt: now - 1000 * 60 * 60
+  }
+];
+
 export const verifiedAdminId = "usr_admin";
+
 
 

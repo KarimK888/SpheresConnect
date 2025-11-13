@@ -25,6 +25,27 @@ export const useCheckin = (options?: { autoRefreshMs?: number }) => {
 
   const checkIn = useCallback(
     async (input: { userId: string; hubId?: string; location: { lat: number; lng: number }; status: "online" | "offline" }) => {
+      if (typeof window !== "undefined") {
+        const { userId, hubId, location, status } = input;
+        const payload = { userId, hubId, location, status };
+        const response = await fetch("/api/checkin", {
+          method: "POST",
+          credentials: "same-origin",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+        const responseBody = (await response.json().catch(() => null)) as Checkin | { error?: { message?: string } } | null;
+        if (!response.ok || !responseBody || "error" in responseBody) {
+          const message =
+            responseBody && "error" in responseBody && responseBody.error
+              ? responseBody.error.message
+              : "Unable to share presence right now";
+          throw new Error(message);
+        }
+        const created = responseBody as Checkin;
+        await refresh();
+        return created;
+      }
       const backend = getBackend();
       const created = await backend.checkins.create(input);
       await refresh();

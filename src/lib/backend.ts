@@ -7,11 +7,23 @@ import type {
   Checkin,
   Event,
   Hub,
+  MatchAction,
+  MatchActionResult,
+  MatchLikeAlert,
+  MatchSuggestion,
   MessageEvent,
   Order,
+  OrderMilestone,
+  Payout,
+  ProfileMedia,
+  ProfileProject,
+  ProfileSocialLink,
   RewardLog,
-  User,
-  MatchSuggestion
+  NotificationEntry,
+  VerificationRequest,
+  ModerationQueueItem,
+  SupportTicket,
+  User
 } from "./types";
 
 export interface AuthSession {
@@ -46,6 +58,14 @@ export interface BackendCheckins {
 
 export interface BackendMatches {
   suggest: (input: { userId: string }) => Promise<MatchSuggestion[]>;
+  history: (input: { userId: string }) => Promise<MatchAction[]>;
+  incomingLikes: (input: { userId: string }) => Promise<MatchLikeAlert[]>;
+  recordAction: (input: {
+    userId: string;
+    targetId: string;
+    action: MatchAction["action"];
+    createdAt?: number;
+  }) => Promise<MatchActionResult>;
 }
 
 export interface BackendMessages {
@@ -118,6 +138,64 @@ export interface BackendRewards {
   log: (input: RewardLog) => Promise<RewardLog>;
 }
 
+export interface BackendProfilePortfolio {
+  projects: {
+    list: (userId: string) => Promise<ProfileProject[]>;
+    create: (input: Omit<ProfileProject, "projectId" | "createdAt"> & { projectId?: string }) => Promise<ProfileProject>;
+    update: (projectId: string, data: Partial<Omit<ProfileProject, "projectId" | "userId" | "createdAt">>) => Promise<ProfileProject>;
+    remove: (projectId: string) => Promise<void>;
+  };
+  media: {
+    list: (userId: string) => Promise<ProfileMedia[]>;
+    create: (input: Omit<ProfileMedia, "mediaId" | "createdAt"> & { mediaId?: string }) => Promise<ProfileMedia>;
+    update: (mediaId: string, data: Partial<Omit<ProfileMedia, "mediaId" | "userId" | "createdAt">>) => Promise<ProfileMedia>;
+    remove: (mediaId: string) => Promise<void>;
+  };
+  socials: {
+    list: (userId: string) => Promise<ProfileSocialLink[]>;
+    create: (input: Omit<ProfileSocialLink, "socialId" | "createdAt"> & { socialId?: string }) => Promise<ProfileSocialLink>;
+    update: (socialId: string, data: Partial<Omit<ProfileSocialLink, "socialId" | "userId" | "createdAt">>) => Promise<ProfileSocialLink>;
+    remove: (socialId: string) => Promise<void>;
+  };
+}
+
+export interface BackendOrderMilestones {
+  milestones: {
+    list: (orderId: string) => Promise<OrderMilestone[]>;
+    create: (input: Omit<OrderMilestone, "milestoneId" | "createdAt" | "updatedAt"> & { milestoneId?: string }) => Promise<OrderMilestone>;
+    update: (milestoneId: string, data: Partial<Omit<OrderMilestone, "milestoneId" | "orderId">>) => Promise<OrderMilestone>;
+  };
+  payouts: {
+    list: (orderId: string) => Promise<Payout[]>;
+    create: (input: Omit<Payout, "payoutId" | "createdAt"> & { payoutId?: string }) => Promise<Payout>;
+    update: (payoutId: string, data: Partial<Omit<Payout, "payoutId" | "createdAt">>) => Promise<Payout>;
+  };
+}
+
+export interface BackendNotifications {
+  list: (input: { userId: string; since?: number; limit?: number }) => Promise<NotificationEntry[]>;
+  create: (entry: Omit<NotificationEntry, "notificationId" | "createdAt" | "readAt"> & { notificationId?: string; createdAt?: number }) => Promise<NotificationEntry>;
+  markRead: (input: { userId: string; ids?: string[]; read: boolean }) => Promise<void>;
+}
+
+export interface BackendAdminQueues {
+  verification: {
+    submit: (input: Omit<VerificationRequest, "requestId" | "status" | "reviewerId" | "reviewedAt" | "createdAt"> & { requestId?: string }) => Promise<VerificationRequest>;
+    list: (input?: { status?: VerificationRequest["status"] }) => Promise<VerificationRequest[]>;
+    update: (requestId: string, data: Partial<Omit<VerificationRequest, "requestId" | "userId" | "createdAt">>) => Promise<VerificationRequest>;
+  };
+  moderation: {
+    report: (input: Omit<ModerationQueueItem, "queueId" | "status" | "reviewerId" | "reviewedAt" | "resolution" | "createdAt"> & { queueId?: string }) => Promise<ModerationQueueItem>;
+    list: (input?: { status?: ModerationQueueItem["status"] }) => Promise<ModerationQueueItem[]>;
+    resolve: (queueId: string, data: Partial<Omit<ModerationQueueItem, "queueId" | "createdAt" | "resourceType" | "resourceId">>) => Promise<ModerationQueueItem>;
+  };
+  support: {
+    submit: (input: Omit<SupportTicket, "ticketId" | "status" | "assignedTo" | "createdAt" | "updatedAt"> & { ticketId?: string }) => Promise<SupportTicket>;
+    list: (input?: { status?: SupportTicket["status"] }) => Promise<SupportTicket[]>;
+    update: (ticketId: string, data: Partial<Omit<SupportTicket, "ticketId" | "userId" | "createdAt">>) => Promise<SupportTicket>;
+  };
+}
+
 export type SignedUploadTarget = {
   uploadUrl: string;
   fileUrl: string;
@@ -143,6 +221,10 @@ export interface BackendAdapter {
   events: BackendEvents;
   rewards: BackendRewards;
   uploads: BackendUploads;
+  profilePortfolio: BackendProfilePortfolio;
+  orderMilestones: BackendOrderMilestones;
+  notifications: BackendNotifications;
+  adminQueues: BackendAdminQueues;
   provider: "firebase" | "supabase";
 }
 
