@@ -1,6 +1,8 @@
 import { createClient, type SupabaseClient, type RealtimeChannel } from "@supabase/supabase-js";
 import type { BackendAdapter, AuthSession, CreateEventInput } from "./backend";
 import type { Database, ChatAttachmentPayload } from "./supabase-database";
+import { sendHubPresenceEmail, sendOrderReceiptEmail } from "./mail";
+import { sendTransactionalSms } from "./sms";
 import type {
   Chat,
   Hub,
@@ -25,7 +27,21 @@ import type {
   NotificationEntry,
   VerificationRequest,
   ModerationQueueItem,
-  SupportTicket
+  SupportTicket,
+  HelpUser,
+  HelpRequest,
+  HelpOffer,
+  HelpChat,
+  HelpMessage,
+  HelpRating,
+  HelpVerificationRecord,
+  HelpModerationLog,
+  ProductivityBoard,
+  ProductivityColumn,
+  ProductivityCard,
+  ProductivityTodo,
+  ProductivityCalendarEvent,
+  ProductivityComment
 } from "./types";
 import {
   sampleHubs,
@@ -35,7 +51,21 @@ import {
   sampleUsers,
   sampleCheckins,
   sampleRewardLogs,
-  sampleMatchActions
+  sampleMatchActions,
+  sampleHelpUsers,
+  sampleHelpRequests,
+  sampleHelpOffers,
+  sampleHelpChats,
+  sampleHelpMessages,
+  sampleHelpRatings,
+  sampleHelpVerifications,
+  sampleHelpModerationLogs,
+  sampleProductivityBoards,
+  sampleProductivityColumns,
+  sampleProductivityCards,
+  sampleProductivityTodos,
+  sampleProductivityEvents,
+  sampleProductivityComments
 } from "./sample-data";
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -46,6 +76,14 @@ const SUPABASE_SERVICE_ROLE_KEY: string | null = isServerRuntime
   ? process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.SUPABASE_SERVICE_ROLE ?? null
   : null;
 const SUPABASE_STORAGE_BUCKET = process.env.NEXT_PUBLIC_SUPABASE_STORAGE_BUCKET ?? "artwork-media";
+const SITE_BASE_URL = (process.env.NEXT_PUBLIC_SITE_URL ?? "").replace(/\/$/, "");
+const HUB_PRESENCE_THRESHOLD =
+  Number(process.env.HUB_PRESENCE_THRESHOLD ?? process.env.NEXT_PUBLIC_HUB_PRESENCE_THRESHOLD ?? "8") || 0;
+const HUB_PRESENCE_ALERT_COOLDOWN_MS =
+  Number(process.env.HUB_PRESENCE_ALERT_COOLDOWN_MS ?? 15 * 60 * 1000) || 15 * 60 * 1000;
+const HUB_PRESENCE_ALERT_MAX_RECIPIENTS =
+  Number(process.env.HUB_PRESENCE_ALERT_MAX_RECIPIENTS ?? 25) || 25;
+const hubPresenceAlertState = new Map<string, { timestamp: number; count: number }>();
 
 const buildQueryString = (params: Record<string, string | number | undefined>) => {
   const search = new URLSearchParams();
@@ -57,6 +95,14 @@ const buildQueryString = (params: Record<string, string | number | undefined>) =
   });
   const query = search.toString();
   return query ? `?${query}` : "";
+};
+
+const buildAbsoluteUrl = (path: string) => {
+  if (!SITE_BASE_URL) {
+    return path;
+  }
+  const normalizedPath = path.startsWith("/") ? path : `/${path}`;
+  return `${SITE_BASE_URL}${normalizedPath}`;
 };
 
 const fetchFromApi = async <T>(path: string, init?: RequestInit) => {
@@ -131,6 +177,20 @@ let fallbackNotifications: NotificationEntry[] = [];
 let fallbackVerificationRequests: VerificationRequest[] = [];
 let fallbackModerationQueue: ModerationQueueItem[] = [];
 let fallbackSupportTickets: SupportTicket[] = [];
+let fallbackHelpUsers: HelpUser[] = [...sampleHelpUsers];
+let fallbackHelpRequests: HelpRequest[] = [...sampleHelpRequests];
+let fallbackHelpOffers: HelpOffer[] = [...sampleHelpOffers];
+let fallbackHelpChats: HelpChat[] = [...sampleHelpChats];
+let fallbackHelpMessages: HelpMessage[] = [...sampleHelpMessages];
+let fallbackHelpRatings: HelpRating[] = [...sampleHelpRatings];
+let fallbackHelpVerifications: HelpVerificationRecord[] = [...sampleHelpVerifications];
+let fallbackHelpModerationLogs: HelpModerationLog[] = [...sampleHelpModerationLogs];
+let fallbackProductivityBoards: ProductivityBoard[] = [...sampleProductivityBoards];
+let fallbackProductivityColumns: ProductivityColumn[] = [...sampleProductivityColumns];
+let fallbackProductivityCards: ProductivityCard[] = [...sampleProductivityCards];
+let fallbackProductivityTodos: ProductivityTodo[] = [...sampleProductivityTodos];
+let fallbackProductivityEvents: ProductivityCalendarEvent[] = [...sampleProductivityEvents];
+let fallbackProductivityComments: ProductivityComment[] = [...sampleProductivityComments];
 const LIKE_HISTORY_WINDOW_MS = 1000 * 60 * 60 * 24 * 3;
 const mergeById = <T>(collection: T[], updates: T[], getId: (item: T) => string): T[] => {
   if (!updates.length) {
@@ -333,6 +393,174 @@ const mapSupportTicketRow = (row: Database["public"]["Tables"]["support_tickets"
   assignedTo: row.assigned_to ?? undefined,
   createdAt: row.created_at ? new Date(row.created_at).getTime() : Date.now(),
   updatedAt: row.updated_at ? new Date(row.updated_at).getTime() : undefined
+});
+
+const mapProductivityBoardRow = (row: Database["public"]["Tables"]["productivity_boards"]["Row"]): ProductivityBoard => ({
+  boardId: row.board_id,
+  userId: row.user_id,
+  title: row.title,
+  description: row.description ?? undefined,
+  createdAt: row.created_at ? new Date(row.created_at).getTime() : Date.now()
+});
+
+const mapProductivityColumnRow = (
+  row: Database["public"]["Tables"]["productivity_columns"]["Row"]
+): ProductivityColumn => ({
+  columnId: row.column_id,
+  boardId: row.board_id,
+  title: row.title,
+  position: row.position,
+  color: row.color ?? undefined,
+  createdAt: row.created_at ? new Date(row.created_at).getTime() : Date.now()
+});
+
+const mapProductivityCardRow = (row: Database["public"]["Tables"]["productivity_cards"]["Row"]): ProductivityCard => ({
+  cardId: row.card_id,
+  columnId: row.column_id,
+  title: row.title,
+  description: row.description ?? undefined,
+  labels: row.labels ?? [],
+  dueDate: row.due_date ? new Date(row.due_date).getTime() : undefined,
+  assignees: row.assignees ?? [],
+  metadata: row.metadata ?? undefined,
+  position: row.position,
+  priority: (row.priority as ProductivityCard["priority"]) ?? "medium",
+  createdAt: row.created_at ? new Date(row.created_at).getTime() : Date.now()
+});
+
+const mapProductivityTodoRow = (row: Database["public"]["Tables"]["productivity_todos"]["Row"]): ProductivityTodo => ({
+  todoId: row.todo_id,
+  userId: row.user_id,
+  title: row.title,
+  completed: row.completed ?? false,
+  dueDate: row.due_date ? new Date(row.due_date).getTime() : undefined,
+  tags: row.tags ?? [],
+  priority: (row.priority as ProductivityTodo["priority"]) ?? "medium",
+  createdAt: row.created_at ? new Date(row.created_at).getTime() : Date.now()
+});
+
+const mapProductivityEventRow = (
+  row: Database["public"]["Tables"]["productivity_events"]["Row"]
+): ProductivityCalendarEvent => ({
+  eventId: row.event_id,
+  userId: row.user_id,
+  title: row.title,
+  description: row.description ?? undefined,
+  startAt: row.start_at ? new Date(row.start_at).getTime() : Date.now(),
+  endAt: row.end_at ? new Date(row.end_at).getTime() : undefined,
+  location: row.location ?? undefined,
+  color: row.color ?? undefined,
+  metadata: row.metadata ?? undefined,
+  createdAt: row.created_at ? new Date(row.created_at).getTime() : Date.now()
+});
+
+const mapProductivityCommentRow = (
+  row: Database["public"]["Tables"]["productivity_comments"]["Row"]
+): ProductivityComment => ({
+  commentId: row.comment_id,
+  entityType: row.entity_type as "card" | "todo",
+  entityId: row.entity_id,
+  userId: row.user_id,
+  authorName: row.author_name ?? undefined,
+  body: row.body,
+  createdAt: row.created_at ? new Date(row.created_at).getTime() : Date.now()
+});
+
+const mapHelpUserRow = (row: Database["public"]["Tables"]["User"]["Row"]): HelpUser => ({
+  id: row.id,
+  email: row.email,
+  fullName: row.fullName ?? undefined,
+  avatarUrl: row.avatarUrl ?? undefined,
+  phoneVerified: row.phoneVerified,
+  idVerified: row.idVerified,
+  trustLevel: row.trustLevel as HelpUser["trustLevel"],
+  createdAt: row.createdAt ? new Date(row.createdAt).getTime() : Date.now(),
+  updatedAt: row.updatedAt ? new Date(row.updatedAt).getTime() : Date.now(),
+  about: row.about ?? undefined,
+  aboutGenerated: row.aboutGenerated ?? undefined,
+  location: row.location ?? undefined,
+  phone: row.phone ?? undefined,
+  preferredCategories: row.preferredCategories ?? [],
+  profileTags: row.profileTags ?? [],
+  pronouns: row.pronouns ?? undefined,
+  publicProfile: row.publicProfile,
+  radiusPreference: row.radiusPreference ?? 5
+});
+
+const mapHelpRequestRow = (row: Database["public"]["Tables"]["HelpRequest"]["Row"]): HelpRequest => ({
+  requestId: row.id,
+  requesterId: row.requesterId,
+  title: row.title,
+  description: row.description,
+  summary: row.summary ?? undefined,
+  category: row.category as HelpRequest["category"],
+  urgency: row.urgency as HelpRequest["urgency"],
+  location: (row.location ?? undefined) as HelpRequest["location"],
+  status: row.status as HelpRequest["status"],
+  aiChecklist: row.aiChecklist ?? undefined,
+  aiRiskScore: row.aiRiskScore,
+  createdAt: row.createdAt ? new Date(row.createdAt).getTime() : Date.now(),
+  updatedAt: row.updatedAt ? new Date(row.updatedAt).getTime() : Date.now()
+});
+
+const mapHelpOfferRow = (row: Database["public"]["Tables"]["HelpOffer"]["Row"]): HelpOffer => ({
+  offerId: row.id,
+  helperId: row.helperId,
+  requestId: row.requestId,
+  message: row.message,
+  status: row.status as HelpOffer["status"],
+  createdAt: row.createdAt ? new Date(row.createdAt).getTime() : Date.now(),
+  updatedAt: row.updatedAt ? new Date(row.updatedAt).getTime() : Date.now()
+});
+
+const mapHelpChatRow = (row: Database["public"]["Tables"]["Chat"]["Row"]): HelpChat => ({
+  chatId: row.id,
+  requestId: row.requestId,
+  helperId: row.helperId,
+  requesterId: row.requesterId,
+  consentLevel: row.consentLevel as HelpChat["consentLevel"],
+  createdAt: row.createdAt ? new Date(row.createdAt).getTime() : Date.now(),
+  updatedAt: row.updatedAt ? new Date(row.updatedAt).getTime() : Date.now()
+});
+
+const mapHelpMessageRow = (row: Database["public"]["Tables"]["Message"]["Row"]): HelpMessage => ({
+  messageId: row.id,
+  chatId: row.chatId,
+  authorId: row.authorId,
+  content: row.content,
+  aiRewrite: row.aiRewrite ?? undefined,
+  createdAt: row.createdAt ? new Date(row.createdAt).getTime() : Date.now()
+});
+
+const mapHelpRatingRow = (row: Database["public"]["Tables"]["Rating"]["Row"]): HelpRating => ({
+  ratingId: row.id,
+  score: row.score,
+  feedback: row.feedback ?? undefined,
+  helperId: row.helperId,
+  requesterId: row.requesterId,
+  requestId: row.requestId,
+  createdAt: row.createdAt ? new Date(row.createdAt).getTime() : Date.now()
+});
+
+const mapHelpVerificationRow = (row: Database["public"]["Tables"]["Verification"]["Row"]): HelpVerificationRecord => ({
+  verificationId: row.id,
+  userId: row.userId,
+  type: row.type,
+  status: row.status as HelpVerificationRecord["status"],
+  metadata: row.metadata ?? undefined,
+  createdAt: row.createdAt ? new Date(row.createdAt).getTime() : Date.now(),
+  updatedAt: row.updatedAt ? new Date(row.updatedAt).getTime() : Date.now()
+});
+
+const mapHelpModerationLogRow = (row: Database["public"]["Tables"]["ModerationLog"]["Row"]): HelpModerationLog => ({
+  moderationId: row.id,
+  entityType: row.entityType,
+  entityId: row.entityId,
+  action: row.action,
+  notes: row.notes ?? undefined,
+  createdAt: row.createdAt ? new Date(row.createdAt).getTime() : Date.now(),
+  reviewedBy: row.reviewedBy ?? undefined,
+  metadata: row.metadata ?? undefined
 });
 
 const loadMatchHistory = async (userId: string): Promise<MatchAction[]> => {
@@ -608,7 +836,8 @@ const mapOrderRow = (row: Database["public"]["Tables"]["orders"]["Row"]): Order 
   currency: row.currency,
   status: row.status,
   stripePaymentIntentId: row.stripe_payment_intent_id ?? undefined,
-  createdAt: new Date(row.created_at).getTime()
+  createdAt: new Date(row.created_at).getTime(),
+  metadata: row.metadata ?? undefined
 });
 
 const mapEventRow = (row: Database["public"]["Tables"]["events"]["Row"]): Event => ({
@@ -890,6 +1119,85 @@ export const createSupabaseBackend = (): BackendAdapter => {
     }
   };
 
+  const triggerHubPresenceBroadcast = async (hub: Hub, count: number) => {
+    const memberIds = Array.from(new Set(hub.activeUsers ?? [])).slice(0, HUB_PRESENCE_ALERT_MAX_RECIPIENTS);
+    if (!memberIds.length) {
+      return;
+    }
+    const link = `/hub-map?hub=${hub.hubId}`;
+    await Promise.all(
+      memberIds.map((userId) =>
+        createNotificationEntry({
+          userId,
+          kind: "system",
+          title: `Live now at ${hub.name}`,
+          body: `${count} creatives are checked in. Tap to join.`,
+          link,
+          metadata: { type: "hub_presence", hubId: hub.hubId, count }
+        }).catch((error) =>
+          console.warn("[supabase] hub presence notification failed:", error instanceof Error ? error.message : error)
+        )
+      )
+    );
+    const profiles = await Promise.all(memberIds.map(fetchUserById));
+    const emails = profiles.map((profile) => profile?.email).filter(Boolean) as string[];
+    if (emails.length) {
+      await sendHubPresenceEmail({
+        to: emails,
+        hubName: hub.name,
+        count,
+        hubLink: buildAbsoluteUrl(link)
+      }).catch((error) =>
+        console.warn("[supabase] hub presence email failed:", error instanceof Error ? error.message : error)
+      );
+    }
+  };
+
+  const evaluateHubPresenceThreshold = async (hubId: string | null | undefined) => {
+    if (!clients || !HUB_PRESENCE_THRESHOLD || !hubId) {
+      return;
+    }
+    try {
+      const { admin } = clients;
+      const [hubResult, presenceResult] = await Promise.all([
+        admin.from("hubs").select("*").eq("hub_id", hubId).maybeSingle(),
+        admin
+          .from("checkins")
+          .select("checkin_id")
+          .eq("hub_id", hubId)
+          .gt("expires_at", new Date().toISOString())
+      ]);
+      if (hubResult.error) throw hubResult.error;
+      const hubRow = hubResult.data;
+      if (!hubRow) {
+        return;
+      }
+      if (presenceResult.error) throw presenceResult.error;
+      const count = presenceResult.data?.length ?? 0;
+      const now = Date.now();
+      const previous = hubPresenceAlertState.get(hubId);
+      if (count < HUB_PRESENCE_THRESHOLD) {
+        hubPresenceAlertState.set(hubId, { count, timestamp: now });
+        return;
+      }
+      if (
+        previous &&
+        previous.count >= HUB_PRESENCE_THRESHOLD &&
+        now - previous.timestamp < HUB_PRESENCE_ALERT_COOLDOWN_MS &&
+        count <= previous.count
+      ) {
+        return;
+      }
+      hubPresenceAlertState.set(hubId, { count, timestamp: now });
+      await triggerHubPresenceBroadcast(mapHubRow(hubRow), count);
+    } catch (error) {
+      console.warn(
+        "[supabase] hub presence evaluation error:",
+        error instanceof Error ? error.message : error
+      );
+    }
+  };
+
   const listNotificationEntries = async ({
     userId,
     since,
@@ -964,6 +1272,121 @@ export const createSupabaseBackend = (): BackendAdapter => {
         if (ids?.length && !ids.includes(entry.notificationId)) return entry;
         return { ...entry, readAt: read ? Date.now() : undefined };
       });
+    }
+  };
+
+  const fetchUserSummary = async (userId: string) => {
+    const fallback = sampleUsers.find((entry) => entry.userId === userId) ?? null;
+    if (!clients) {
+      return fallback;
+    }
+    try {
+      const { data, error } = await admin
+        .from("users")
+        .select("user_id, display_name, email")
+        .eq("user_id", userId)
+        .maybeSingle();
+      if (error) throw error;
+      return data
+        ? {
+            userId: data.user_id,
+            displayName: data.display_name ?? undefined,
+            email: data.email ?? undefined
+          }
+        : fallback;
+    } catch (error) {
+      console.warn("[supabase] fetchUserSummary fallback:", error instanceof Error ? error.message : error);
+      return fallback;
+    }
+  };
+
+  const fetchArtworkSummary = async (artworkId: string) => {
+    const fallback = sampleArtworks.find((entry) => entry.artworkId === artworkId) ?? null;
+    if (!clients) return fallback;
+    try {
+      const { data, error } = await admin
+        .from("artworks")
+        .select("artwork_id, title")
+        .eq("artwork_id", artworkId)
+        .maybeSingle();
+      if (error) throw error;
+      return data
+        ? {
+            artworkId: data.artwork_id,
+            title: data.title
+          }
+        : fallback;
+    } catch (error) {
+      console.warn("[supabase] fetchArtworkSummary fallback:", error instanceof Error ? error.message : error);
+      return fallback;
+    }
+  };
+
+  const ensureDirectChat = async (userA: string, userB: string) => {
+    if (!clients) return null;
+    const members = [userA, userB];
+    const { data, error } = await admin
+      .from("chats")
+      .select("*")
+      .eq("is_group", false)
+      .contains("member_ids", members);
+    if (!error && data?.length) {
+      const existing = data.find(
+        (row) => row.member_ids.length === 2 && members.every((member) => row.member_ids.includes(member))
+      );
+      if (existing) {
+        return existing;
+      }
+    }
+    const chatId = generateId();
+    const { data: created, error: insertError } = await admin
+      .from("chats")
+      .insert({
+        chat_id: chatId,
+        member_ids: members,
+        is_group: false,
+        title: null,
+        created_at: new Date().toISOString(),
+        archived_by: [],
+        hidden_by: []
+      })
+      .select("*")
+      .single();
+    if (insertError || !created) {
+      throw insertError ?? new Error("Unable to create chat");
+    }
+    return created;
+  };
+
+  const sendAutomatedMessage = async ({
+    chatId,
+    senderId,
+    content
+  }: {
+    chatId: string;
+    senderId: string;
+    content: string;
+  }) => {
+    if (!clients) return;
+    const payload: Database["public"]["Tables"]["messages"]["Insert"] = {
+      message_id: generateId(),
+      chat_id: chatId,
+      sender_id: senderId,
+      content,
+      attachments: [],
+      metadata: null,
+      is_silent: false,
+      scheduled_for: null,
+      expires_at: null,
+      created_at: new Date().toISOString(),
+      delivered_to: null,
+      read_by: [senderId],
+      pinned: false
+    };
+    try {
+      await admin.from("messages").insert(payload);
+    } catch (error) {
+      console.warn("[supabase] sendAutomatedMessage failed:", error instanceof Error ? error.message : error);
     }
   };
 
@@ -1701,6 +2124,7 @@ export const createSupabaseBackend = (): BackendAdapter => {
             ...fallbackCheckins.filter((checkin) => checkin.userId !== userId),
             mapped
           ];
+          await evaluateHubPresenceThreshold(hubId);
           return mapped;
         } catch (error) {
           console.warn("[supabase] checkins.create fallback:", error instanceof Error ? error.message : error);
@@ -1972,6 +2396,16 @@ export const createSupabaseBackend = (): BackendAdapter => {
         return mapMessageWithReactions(data ?? []);
       },
       send: async ({ chatId, senderId, content, attachments, metadata, isSilent, scheduledFor, expiresAt }) => {
+        if (!(content?.trim() || (attachments && attachments.length > 0))) {
+          throw new Error("Message requires content or an attachment");
+        }
+        const { data: chatRow, error: chatError } = await admin.from("chats").select("*").eq("chat_id", chatId).single();
+        if (chatError || !chatRow) {
+          throw chatError ?? new Error("Chat not found");
+        }
+        if (!chatRow.member_ids.includes(senderId)) {
+          throw new Error("You are not a member of this chat");
+        }
         const messageId = generateId();
         const createdAt = new Date().toISOString();
         const payload: Database["public"]["Tables"]["messages"]["Insert"] = {
@@ -2397,7 +2831,7 @@ export const createSupabaseBackend = (): BackendAdapter => {
       }
     },
     orders: {
-      createPaymentIntent: async ({ artworkId, buyerId }) => {
+      createPaymentIntent: async ({ artworkId, buyerId, metadata }) => {
         const orderId = generateId();
         try {
           const { data: artworkRow, error: artworkError } = await admin
@@ -2418,7 +2852,8 @@ export const createSupabaseBackend = (): BackendAdapter => {
             currency: artworkRow.currency,
             status: "pending",
             stripe_payment_intent_id: `pi_${orderId}`,
-            created_at: new Date().toISOString()
+            created_at: new Date().toISOString(),
+            metadata: metadata ?? null
           };
           const { data, error } = await admin.from("orders").insert(orderPayload).select("*").single();
           if (error || !data) {
@@ -2442,7 +2877,8 @@ export const createSupabaseBackend = (): BackendAdapter => {
             currency: artwork.currency,
             status: "pending" as const,
             stripePaymentIntentId: `pi_${orderId}`,
-            createdAt: Date.now()
+            createdAt: Date.now(),
+            metadata
           };
           fallbackOrders = [order, ...fallbackOrders];
           return { clientSecret: `pi_secret_${orderId}`, order };
@@ -2483,6 +2919,108 @@ export const createSupabaseBackend = (): BackendAdapter => {
           }
           const mapped = mapOrderRow(updated);
           fallbackOrders = fallbackOrders.map((order) => (order.orderId === mapped.orderId ? mapped : order));
+          if (status === "paid") {
+            try {
+              const [buyerSummary, sellerSummary, artworkSummary] = await Promise.all([
+                fetchUserSummary(mapped.buyerId),
+                fetchUserSummary(mapped.sellerId),
+                fetchArtworkSummary(mapped.artworkId)
+              ]);
+              const artworkTitle = artworkSummary?.title ?? "an artwork";
+              const buyerName = buyerSummary?.displayName ?? buyerSummary?.email ?? mapped.buyerId;
+              const sellerName = sellerSummary?.displayName ?? sellerSummary?.email ?? mapped.sellerId;
+              await Promise.all([
+                createNotificationEntry({
+                  userId: mapped.sellerId,
+                  kind: "order",
+                  title: `New order from ${buyerName}`,
+                  body: `${buyerName} purchased "${artworkTitle}". Review the order details.`,
+                  link: `/marketplace/orders/${mapped.orderId}`,
+                  metadata: { orderId: mapped.orderId, artworkId: mapped.artworkId }
+                }),
+                createNotificationEntry({
+                  userId: mapped.buyerId,
+                  kind: "order",
+                  title: `Order confirmed: ${artworkTitle}`,
+                  body: `Thanks for collecting from ${sellerName}. We'll follow up with tracking info soon.`,
+                  link: `/marketplace/orders/${mapped.orderId}`,
+                  metadata: { orderId: mapped.orderId, artworkId: mapped.artworkId }
+                })
+              ]);
+              if (clients) {
+                const directChat = await ensureDirectChat(mapped.sellerId, mapped.buyerId);
+                if (directChat) {
+                  await sendAutomatedMessage({
+                    chatId: directChat.chat_id,
+                    senderId: mapped.sellerId,
+                    content: `Hi ${buyerName}, thanks for your purchase of "${artworkTitle}". We'll follow up from the hub with fulfillment details and a tracking number shortly.`
+                  });
+                }
+              }
+              try {
+                const metadata = (mapped.metadata ?? {}) as {
+                  buyerName?: string;
+                  buyerEmail?: string;
+                  buyerPhone?: string;
+                  notes?: string;
+                };
+                const amountLabel = (mapped.amount / 100).toLocaleString(undefined, {
+                  style: "currency",
+                  currency: mapped.currency.toUpperCase()
+                });
+                const reminderTasks: Promise<unknown>[] = [];
+                if (metadata.buyerEmail) {
+                  reminderTasks.push(
+                    sendOrderReceiptEmail({
+                      to: metadata.buyerEmail,
+                      recipientName: metadata.buyerName,
+                      orderId: mapped.orderId,
+                      amountLabel,
+                      artworkTitle,
+                      role: "buyer",
+                      counterpartyName: sellerName,
+                      notes: metadata.notes
+                    })
+                  );
+                }
+                if (sellerSummary?.email) {
+                  reminderTasks.push(
+                    sendOrderReceiptEmail({
+                      to: sellerSummary.email,
+                      recipientName: sellerName,
+                      orderId: mapped.orderId,
+                      amountLabel,
+                      artworkTitle,
+                      role: "seller",
+                      counterpartyName: metadata.buyerName ?? buyerName,
+                      notes: metadata.notes
+                    })
+                  );
+                }
+                if (metadata.buyerPhone) {
+                  reminderTasks.push(
+                    sendTransactionalSms({
+                      to: metadata.buyerPhone,
+                      message: `Your order ${mapped.orderId.slice(0, 8).toUpperCase()} for ${artworkTitle} is confirmed.`
+                    })
+                  );
+                }
+                if (reminderTasks.length) {
+                  await Promise.all(reminderTasks);
+                }
+              } catch (reminderError) {
+                console.warn(
+                  "[supabase] orders.confirmPayment reminders failed:",
+                  reminderError instanceof Error ? reminderError.message : reminderError
+                );
+              }
+            } catch (notifyError) {
+              console.warn(
+                "[supabase] orders.confirmPayment notification failed:",
+                notifyError instanceof Error ? notifyError.message : notifyError
+              );
+            }
+          }
           return mapped;
         } catch (error) {
           console.warn("[supabase] orders.confirmPayment falling back:", error);
@@ -2497,14 +3035,145 @@ export const createSupabaseBackend = (): BackendAdapter => {
           if (!updated) {
             throw new Error("Order not found");
           }
-          if (status === "paid") {
+          if (status === "paid" && updated) {
             fallbackArtworks = fallbackArtworks.map((artwork) =>
-              artwork.artworkId === updated?.artworkId
-                ? { ...artwork, status: "sold", isSold: true }
-                : artwork
+              artwork.artworkId === updated?.artworkId ? { ...artwork, status: "sold", isSold: true } : artwork
             );
+            try {
+              const [buyerSummary, sellerSummary, artworkSummary] = await Promise.all([
+                fetchUserSummary(updated.buyerId),
+                fetchUserSummary(updated.sellerId),
+                fetchArtworkSummary(updated.artworkId)
+              ]);
+              const artworkTitle = artworkSummary?.title ?? "an artwork";
+              const buyerName = buyerSummary?.displayName ?? buyerSummary?.email ?? updated.buyerId;
+              const sellerName = sellerSummary?.displayName ?? sellerSummary?.email ?? updated.sellerId;
+              await Promise.all([
+                createNotificationEntry({
+                  userId: updated.sellerId,
+                  kind: "order",
+                  title: `New order from ${buyerName}`,
+                  body: `${buyerName} purchased "${artworkTitle}". Review the order details.`,
+                  link: `/marketplace/orders/${updated.orderId}`,
+                  metadata: { orderId: updated.orderId, artworkId: updated.artworkId }
+                }),
+                createNotificationEntry({
+                  userId: updated.buyerId,
+                  kind: "order",
+                  title: `Order confirmed: ${artworkTitle}`,
+                  body: `Thanks for collecting from ${sellerName}. We'll follow up with tracking info soon.`,
+                  link: `/marketplace/orders/${updated.orderId}`,
+                  metadata: { orderId: updated.orderId, artworkId: updated.artworkId }
+                })
+              ]);
+              try {
+                const metadata = (updated.metadata ?? {}) as {
+                  buyerName?: string;
+                  buyerEmail?: string;
+                  buyerPhone?: string;
+                  notes?: string;
+                };
+                const amountLabel = (updated.amount / 100).toLocaleString(undefined, {
+                  style: "currency",
+                  currency: updated.currency.toUpperCase()
+                });
+                const reminderTasks: Promise<unknown>[] = [];
+                if (metadata.buyerEmail) {
+                  reminderTasks.push(
+                    sendOrderReceiptEmail({
+                      to: metadata.buyerEmail,
+                      recipientName: metadata.buyerName,
+                      orderId: updated.orderId,
+                      amountLabel,
+                      artworkTitle,
+                      role: "buyer",
+                      counterpartyName: sellerName,
+                      notes: metadata.notes
+                    })
+                  );
+                }
+                if (sellerSummary?.email) {
+                  reminderTasks.push(
+                    sendOrderReceiptEmail({
+                      to: sellerSummary.email,
+                      recipientName: sellerName,
+                      orderId: updated.orderId,
+                      amountLabel,
+                      artworkTitle,
+                      role: "seller",
+                      counterpartyName: metadata.buyerName ?? buyerName,
+                      notes: metadata.notes
+                    })
+                  );
+                }
+                if (metadata.buyerPhone) {
+                  reminderTasks.push(
+                    sendTransactionalSms({
+                      to: metadata.buyerPhone,
+                      message: `Your order ${updated.orderId.slice(0, 8).toUpperCase()} for ${artworkTitle} is confirmed.`
+                    })
+                  );
+                }
+                if (reminderTasks.length) {
+                  await Promise.all(reminderTasks);
+                }
+              } catch (reminderFallbackError) {
+                console.warn(
+                  "[supabase] orders.confirmPayment fallback reminders failed:",
+                  reminderFallbackError instanceof Error ? reminderFallbackError.message : reminderFallbackError
+                );
+              }
+            } catch (notifyFallbackError) {
+              console.warn(
+                "[supabase] orders.confirmPayment fallback notification failed:",
+                notifyFallbackError instanceof Error ? notifyFallbackError.message : notifyFallbackError
+              );
+            }
           }
           return updated;
+        }
+      },
+      get: async (orderId) => {
+        try {
+          const { data, error } = await admin.from("orders").select("*").eq("order_id", orderId).single();
+          if (error || !data) {
+            throw error ?? new Error("Order not found");
+          }
+          const mapped = mapOrderRow(data);
+          fallbackOrders = mergeById(fallbackOrders, [mapped], (item) => item.orderId);
+          return mapped;
+        } catch (error) {
+          console.warn("[supabase] orders.get falling back:", error instanceof Error ? error.message : error);
+          return fallbackOrders.find((order) => order.orderId === orderId) ?? null;
+        }
+      },
+      listForUser: async ({ userId, role = "all" }) => {
+        const buildQuery = () => {
+          if (role === "buyer") {
+            return admin.from("orders").select("*").eq("buyer_id", userId);
+          }
+          if (role === "seller") {
+            return admin.from("orders").select("*").eq("seller_id", userId);
+          }
+          return admin.from("orders").select("*").or(`buyer_id.eq.${userId},seller_id.eq.${userId}`);
+        };
+        try {
+          const { data, error } = await buildQuery().order("created_at", { ascending: false });
+          if (error || !data) {
+            throw error ?? new Error("Unable to fetch orders");
+          }
+          const mapped = data.map(mapOrderRow);
+          fallbackOrders = mergeById(fallbackOrders, mapped, (item) => item.orderId);
+          return mapped;
+        } catch (error) {
+          console.warn("[supabase] orders.listForUser falling back:", error instanceof Error ? error.message : error);
+          return fallbackOrders
+            .filter((order) => {
+              if (role === "buyer") return order.buyerId === userId;
+              if (role === "seller") return order.sellerId === userId;
+              return order.buyerId === userId || order.sellerId === userId;
+            })
+            .sort((a, b) => b.createdAt - a.createdAt);
         }
       }
     },
@@ -2767,7 +3436,7 @@ export const createSupabaseBackend = (): BackendAdapter => {
         }
       }
     },
-    adminQueues: {
+      adminQueues: {
       verification: {
         submit: async (input) => {
           const request: VerificationRequest = {
@@ -3077,6 +3746,1089 @@ export const createSupabaseBackend = (): BackendAdapter => {
             };
             fallbackSupportTickets = mergeById(fallbackSupportTickets, [updated], (item) => item.ticketId);
             return updated;
+          }
+        }
+      }
+      },
+      productivity: {
+        fetch: async (userId) => {
+          const prepareFallback = () => {
+            const boards = fallbackProductivityBoards.filter((board) => board.userId === userId);
+            const boardIds = new Set(boards.map((board) => board.boardId));
+            const columns = fallbackProductivityColumns.filter((column) => boardIds.has(column.boardId));
+            const columnIds = new Set(columns.map((column) => column.columnId));
+            const cards = fallbackProductivityCards.filter((card) => columnIds.has(card.columnId));
+            const todos = fallbackProductivityTodos.filter((todo) => todo.userId === userId);
+            const events = fallbackProductivityEvents.filter((event) => event.userId === userId);
+            const cardIds = new Set(cards.map((card) => card.cardId));
+            const todoIds = new Set(todos.map((todo) => todo.todoId));
+            const comments = fallbackProductivityComments.filter(
+              (comment) =>
+                (comment.entityType === "card" && cardIds.has(comment.entityId)) ||
+                (comment.entityType === "todo" && todoIds.has(comment.entityId))
+            );
+            return { boards, columns, cards, todos, events, comments };
+          };
+
+          const ensureWorkspace = async () => {
+            try {
+              const { data: existingBoards, error: existingError } = await admin
+                .from("productivity_boards")
+                .select("board_id")
+                .eq("user_id", userId)
+                .limit(1);
+              if (existingError) throw existingError;
+              if ((existingBoards ?? []).length) return;
+
+              const templateBoard = sampleProductivityBoards[0];
+              const { data: boardRow, error: boardError } = await admin
+                .from("productivity_boards")
+                .insert({
+                  user_id: userId,
+                  title: templateBoard?.title ?? "Creative workspace",
+                  description: templateBoard?.description ?? null
+                })
+                .select("*")
+                .single();
+              if (boardError || !boardRow) {
+                throw boardError ?? new Error("Unable to seed productivity board");
+              }
+              const columnTemplates =
+                sampleProductivityColumns.length > 0
+                  ? sampleProductivityColumns
+                  : [
+                      { title: "Backlog", position: 0, color: null },
+                      { title: "In Progress", position: 1, color: null },
+                      { title: "Done", position: 2, color: null }
+                    ];
+              const columnPayload = columnTemplates.map((column, index) => ({
+                board_id: boardRow.board_id,
+                title: column.title ?? `Column ${index + 1}`,
+                position: column.position ?? index,
+                color: column.color ?? null
+              }));
+              if (columnPayload.length) {
+                await admin.from("productivity_columns").insert(columnPayload);
+              }
+            } catch (error) {
+              console.warn("[supabase] ensureProductivityWorkspace:", error instanceof Error ? error.message : error);
+            }
+          };
+
+          const loadSnapshot = async (): Promise<{
+            boards: ProductivityBoard[];
+            columns: ProductivityColumn[];
+            cards: ProductivityCard[];
+            todos: ProductivityTodo[];
+            events: ProductivityCalendarEvent[];
+            comments: ProductivityComment[];
+          }> => {
+            const [{ data: boardRows, error: boardError }, { data: columnRows, error: columnError }, { data: cardRows, error: cardError }] =
+              await Promise.all([
+                admin.from("productivity_boards").select("*").eq("user_id", userId).order("created_at", { ascending: true }),
+                admin
+                  .from("productivity_columns")
+                  .select("*")
+                  .order("position", { ascending: true }),
+                admin
+                  .from("productivity_cards")
+                  .select("*")
+                  .order("position", { ascending: true })
+              ]);
+            if (boardError || columnError || cardError) {
+              throw boardError ?? columnError ?? cardError;
+            }
+            const boards = (boardRows ?? []).map(mapProductivityBoardRow);
+            const boardIds = new Set(boards.map((board) => board.boardId));
+            const columns = (columnRows ?? []).map(mapProductivityColumnRow).filter((column) => boardIds.has(column.boardId));
+            const columnIds = new Set(columns.map((column) => column.columnId));
+            const cards = (cardRows ?? []).map(mapProductivityCardRow).filter((card) => columnIds.has(card.columnId));
+            const [{ data: todoRows, error: todoError }, { data: eventRows, error: eventError }] = await Promise.all([
+              admin.from("productivity_todos").select("*").eq("user_id", userId).order("created_at", { ascending: false }),
+              admin.from("productivity_events").select("*").eq("user_id", userId).order("start_at", { ascending: true })
+            ]);
+            if (todoError || eventError) {
+              throw todoError ?? eventError;
+            }
+            const todos = (todoRows ?? []).map(mapProductivityTodoRow);
+            const events = (eventRows ?? []).map(mapProductivityEventRow);
+            const cardIds = cards.map((card) => card.cardId);
+            const todoIds = todos.map((todo) => todo.todoId);
+            let comments: ProductivityComment[] = [];
+            if (cardIds.length || todoIds.length) {
+              const [cardComments, todoComments] = await Promise.all([
+                cardIds.length
+                  ? admin
+                      .from("productivity_comments")
+                      .select("*")
+                      .eq("entity_type", "card")
+                      .in("entity_id", cardIds)
+                  : { data: [], error: null },
+                todoIds.length
+                  ? admin
+                      .from("productivity_comments")
+                      .select("*")
+                      .eq("entity_type", "todo")
+                      .in("entity_id", todoIds)
+                  : { data: [], error: null }
+              ]);
+              if (cardComments.error || todoComments.error) {
+                throw cardComments.error ?? todoComments.error;
+              }
+              comments = [...(cardComments.data ?? []), ...(todoComments.data ?? [])].map(mapProductivityCommentRow);
+            }
+            return { boards, columns, cards, todos, events, comments };
+          };
+
+          try {
+            let snapshot = await loadSnapshot();
+            if (!snapshot.boards.length) {
+              await ensureWorkspace();
+              snapshot = await loadSnapshot();
+            }
+            fallbackProductivityBoards = mergeById(fallbackProductivityBoards, snapshot.boards, (item) => item.boardId);
+            fallbackProductivityColumns = mergeById(fallbackProductivityColumns, snapshot.columns, (item) => item.columnId);
+            fallbackProductivityCards = mergeById(fallbackProductivityCards, snapshot.cards, (item) => item.cardId);
+            fallbackProductivityTodos = mergeById(fallbackProductivityTodos, snapshot.todos, (item) => item.todoId);
+            fallbackProductivityEvents = mergeById(fallbackProductivityEvents, snapshot.events, (item) => item.eventId);
+            fallbackProductivityComments = mergeById(fallbackProductivityComments, snapshot.comments, (item) => item.commentId);
+            return snapshot;
+          } catch (error) {
+            console.warn("[supabase] productivity.fetch fallback:", error instanceof Error ? error.message : error);
+            return prepareFallback();
+          }
+        },
+        createCard: async (input) => {
+          try {
+            const payload: Database["public"]["Tables"]["productivity_cards"]["Insert"] = {
+              column_id: input.columnId,
+              title: input.title,
+              description: input.description ?? null,
+              labels: input.labels ?? [],
+              due_date: input.dueDate ? new Date(input.dueDate).toISOString() : null,
+              assignees: input.assignees ?? [],
+              metadata: input.metadata ?? null,
+              position: input.position ?? 0,
+              priority: input.priority ?? "medium"
+            };
+            const { data, error } = await admin.from("productivity_cards").insert(payload).select("*").single();
+            if (error || !data) {
+              throw error ?? new Error("Unable to create card");
+            }
+            const mapped = mapProductivityCardRow(data);
+            fallbackProductivityCards = mergeById(fallbackProductivityCards, [mapped], (item) => item.cardId);
+            return mapped;
+          } catch (error) {
+            console.warn("[supabase] productivity.createCard fallback:", error instanceof Error ? error.message : error);
+            const card: ProductivityCard = {
+              cardId: generateId(),
+              columnId: input.columnId,
+              title: input.title,
+              description: input.description ?? undefined,
+              labels: input.labels ?? [],
+              dueDate: input.dueDate,
+              assignees: input.assignees ?? [],
+              metadata: input.metadata,
+              position: input.position ?? 0,
+              priority: input.priority ?? "medium",
+              createdAt: Date.now()
+            };
+            fallbackProductivityCards = mergeById(fallbackProductivityCards, [card], (item) => item.cardId);
+            return card;
+          }
+        },
+        moveCard: async ({ cardId, columnId, position }) => {
+          try {
+            const { data, error } = await admin
+              .from("productivity_cards")
+              .update({ column_id: columnId, position })
+              .eq("card_id", cardId)
+              .select("*")
+              .single();
+            if (error || !data) {
+              throw error ?? new Error("Unable to move card");
+            }
+            const mapped = mapProductivityCardRow(data);
+            fallbackProductivityCards = mergeById(fallbackProductivityCards, [mapped], (item) => item.cardId);
+            return mapped;
+          } catch (error) {
+            console.warn("[supabase] productivity.moveCard fallback:", error instanceof Error ? error.message : error);
+            let updated: ProductivityCard | undefined;
+            fallbackProductivityCards = fallbackProductivityCards.map((card) => {
+              if (card.cardId === cardId) {
+                updated = { ...card, columnId, position };
+                return updated;
+              }
+              return card;
+            });
+            if (!updated) throw new Error("Card not found");
+            return updated;
+          }
+        },
+        updateCard: async (cardId, data) => {
+          const patch: Database["public"]["Tables"]["productivity_cards"]["Update"] = {};
+          if (data.title !== undefined) patch.title = data.title;
+          if (data.description !== undefined) patch.description = data.description ?? null;
+          if (data.labels !== undefined) patch.labels = data.labels;
+          if (data.dueDate !== undefined) patch.due_date = data.dueDate ? new Date(data.dueDate).toISOString() : null;
+          if (data.assignees !== undefined) patch.assignees = data.assignees;
+          if (data.metadata !== undefined) patch.metadata = data.metadata ?? null;
+          if (data.position !== undefined) patch.position = data.position;
+          if (data.columnId !== undefined) patch.column_id = data.columnId;
+          if (data.priority !== undefined) patch.priority = data.priority;
+          try {
+            const { data: row, error } = await admin
+              .from("productivity_cards")
+              .update(patch)
+              .eq("card_id", cardId)
+              .select("*")
+              .single();
+            if (error || !row) {
+              throw error ?? new Error("Unable to update card");
+            }
+            const mapped = mapProductivityCardRow(row);
+            fallbackProductivityCards = mergeById(fallbackProductivityCards, [mapped], (item) => item.cardId);
+            return mapped;
+          } catch (error) {
+            console.warn("[supabase] productivity.updateCard fallback:", error instanceof Error ? error.message : error);
+            let updated: ProductivityCard | undefined;
+            fallbackProductivityCards = fallbackProductivityCards.map((card) => {
+              if (card.cardId === cardId) {
+                updated = {
+                  ...card,
+                  ...data,
+                  labels: data.labels ?? card.labels,
+                  assignees: data.assignees ?? card.assignees,
+                  metadata: data.metadata ?? card.metadata,
+                  position: data.position ?? card.position,
+                  columnId: data.columnId ?? card.columnId,
+                  dueDate: data.dueDate ?? card.dueDate
+                };
+                return updated;
+              }
+              return card;
+            });
+            if (!updated) throw new Error("Card not found");
+            return updated;
+          }
+        },
+        createTodo: async (input) => {
+          try {
+            const payload: Database["public"]["Tables"]["productivity_todos"]["Insert"] = {
+              user_id: input.userId,
+              title: input.title,
+              completed: input.completed ?? false,
+              due_date: input.dueDate ? new Date(input.dueDate).toISOString() : null,
+              tags: input.tags ?? [],
+              priority: input.priority ?? "medium"
+            };
+            const { data, error } = await admin.from("productivity_todos").insert(payload).select("*").single();
+            if (error || !data) throw error ?? new Error("Unable to create todo");
+            const mapped = mapProductivityTodoRow(data);
+            fallbackProductivityTodos = mergeById(fallbackProductivityTodos, [mapped], (item) => item.todoId);
+            return mapped;
+          } catch (error) {
+            console.warn("[supabase] productivity.createTodo fallback:", error instanceof Error ? error.message : error);
+            const todo: ProductivityTodo = {
+              todoId: generateId(),
+              userId: input.userId,
+              title: input.title,
+              completed: input.completed ?? false,
+              dueDate: input.dueDate,
+              tags: input.tags ?? [],
+              priority: input.priority ?? "medium",
+              createdAt: Date.now()
+            };
+            fallbackProductivityTodos = mergeById(fallbackProductivityTodos, [todo], (item) => item.todoId);
+            return todo;
+          }
+        },
+        updateTodo: async (todoId, data) => {
+          const patch: Database["public"]["Tables"]["productivity_todos"]["Update"] = {};
+          if (data.title !== undefined) patch.title = data.title;
+          if (data.dueDate !== undefined) patch.due_date = data.dueDate ? new Date(data.dueDate).toISOString() : null;
+          if (data.tags !== undefined) patch.tags = data.tags;
+          if (data.priority !== undefined) patch.priority = data.priority;
+          try {
+            const { data: row, error } = await admin
+              .from("productivity_todos")
+              .update(patch)
+              .eq("todo_id", todoId)
+              .select("*")
+              .single();
+            if (error || !row) throw error ?? new Error("Unable to update todo");
+            const mapped = mapProductivityTodoRow(row);
+            fallbackProductivityTodos = mergeById(fallbackProductivityTodos, [mapped], (item) => item.todoId);
+            return mapped;
+          } catch (error) {
+            console.warn("[supabase] productivity.updateTodo fallback:", error instanceof Error ? error.message : error);
+            let updated: ProductivityTodo | undefined;
+            fallbackProductivityTodos = fallbackProductivityTodos.map((todo) => {
+              if (todo.todoId === todoId) {
+                updated = {
+                  ...todo,
+                  ...data,
+                  tags: data.tags ?? todo.tags,
+                  priority: data.priority ?? todo.priority,
+                  dueDate: data.dueDate ?? todo.dueDate,
+                  title: data.title ?? todo.title
+                };
+                return updated;
+              }
+              return todo;
+            });
+            if (!updated) throw new Error("Todo not found");
+            return updated;
+          }
+        },
+        toggleTodo: async (todoId, completed) => {
+          try {
+            const { data, error } = await admin
+              .from("productivity_todos")
+              .update({ completed })
+              .eq("todo_id", todoId)
+              .select("*")
+              .single();
+            if (error || !data) throw error ?? new Error("Unable to update todo");
+            const mapped = mapProductivityTodoRow(data);
+            fallbackProductivityTodos = mergeById(fallbackProductivityTodos, [mapped], (item) => item.todoId);
+            return mapped;
+          } catch (error) {
+            console.warn("[supabase] productivity.toggleTodo fallback:", error instanceof Error ? error.message : error);
+            let updated: ProductivityTodo | undefined;
+            fallbackProductivityTodos = fallbackProductivityTodos.map((todo) => {
+              if (todo.todoId === todoId) {
+                updated = { ...todo, completed };
+                return updated;
+              }
+              return todo;
+            });
+            if (!updated) throw new Error("Todo not found");
+            return updated;
+          }
+        },
+        deleteTodo: async (todoId) => {
+          try {
+            await admin.from("productivity_todos").delete().eq("todo_id", todoId);
+            fallbackProductivityTodos = fallbackProductivityTodos.filter((todo) => todo.todoId !== todoId);
+          } catch (error) {
+            console.warn("[supabase] productivity.deleteTodo fallback:", error instanceof Error ? error.message : error);
+            fallbackProductivityTodos = fallbackProductivityTodos.filter((todo) => todo.todoId !== todoId);
+          }
+        },
+        createEvent: async (input) => {
+          try {
+            const payload: Database["public"]["Tables"]["productivity_events"]["Insert"] = {
+              user_id: input.userId,
+              title: input.title,
+              description: input.description ?? null,
+              start_at: new Date(input.startAt).toISOString(),
+              end_at: input.endAt ? new Date(input.endAt).toISOString() : null,
+              location: input.location ?? null,
+              color: input.color ?? null,
+              metadata: input.metadata ?? null
+            };
+            if (input.eventId) {
+              payload.event_id = input.eventId;
+            }
+            const { data, error } = await admin.from("productivity_events").insert(payload).select("*").single();
+            if (error || !data) throw error ?? new Error("Unable to create event");
+            const mapped = mapProductivityEventRow(data);
+            fallbackProductivityEvents = mergeById(fallbackProductivityEvents, [mapped], (item) => item.eventId);
+            return mapped;
+          } catch (error) {
+            console.warn("[supabase] productivity.createEvent fallback:", error instanceof Error ? error.message : error);
+            const event: ProductivityCalendarEvent = {
+              eventId: input.eventId ?? generateId(),
+              userId: input.userId,
+              title: input.title,
+              description: input.description ?? undefined,
+              startAt: input.startAt,
+              endAt: input.endAt,
+              location: input.location ?? undefined,
+              color: input.color ?? undefined,
+              metadata: input.metadata ?? undefined,
+              createdAt: Date.now()
+            };
+            fallbackProductivityEvents = mergeById(fallbackProductivityEvents, [event], (item) => item.eventId);
+            return event;
+          }
+        },
+        updateEvent: async (eventId, data) => {
+          const patch: Database["public"]["Tables"]["productivity_events"]["Update"] = {};
+          if (data.title !== undefined) patch.title = data.title;
+          if (data.description !== undefined) patch.description = data.description ?? null;
+          if (data.startAt !== undefined) patch.start_at = new Date(data.startAt).toISOString();
+          if (data.endAt !== undefined) patch.end_at = data.endAt ? new Date(data.endAt).toISOString() : null;
+          if (data.location !== undefined) patch.location = data.location ?? null;
+          if (data.color !== undefined) patch.color = data.color ?? null;
+          if (data.metadata !== undefined) patch.metadata = data.metadata ?? null;
+          try {
+            const { data: row, error } = await admin
+              .from("productivity_events")
+              .update(patch)
+              .eq("event_id", eventId)
+              .select("*")
+              .single();
+            if (error || !row) throw error ?? new Error("Unable to update event");
+            const mapped = mapProductivityEventRow(row);
+            fallbackProductivityEvents = mergeById(fallbackProductivityEvents, [mapped], (item) => item.eventId);
+            return mapped;
+          } catch (error) {
+            console.warn("[supabase] productivity.updateEvent fallback:", error instanceof Error ? error.message : error);
+            let updated: ProductivityCalendarEvent | undefined;
+            fallbackProductivityEvents = fallbackProductivityEvents.map((event) => {
+              if (event.eventId === eventId) {
+                updated = {
+                  ...event,
+                  ...data,
+                  metadata: data.metadata ?? event.metadata
+                };
+                return updated;
+              }
+              return event;
+            });
+            if (!updated) throw new Error("Event not found");
+            return updated;
+          }
+        },
+        deleteEvent: async (eventId) => {
+          try {
+            await admin.from("productivity_events").delete().eq("event_id", eventId);
+            fallbackProductivityEvents = fallbackProductivityEvents.filter((event) => event.eventId !== eventId);
+          } catch (error) {
+            console.warn("[supabase] productivity.deleteEvent fallback:", error instanceof Error ? error.message : error);
+            fallbackProductivityEvents = fallbackProductivityEvents.filter((event) => event.eventId !== eventId);
+          }
+        },
+        listComments: async ({ entityType, entityId }) => {
+          const fallback = () =>
+            fallbackProductivityComments
+              .filter((comment) => comment.entityType === entityType && comment.entityId === entityId)
+              .sort((a, b) => a.createdAt - b.createdAt);
+          try {
+            const { data, error } = await admin
+              .from("productivity_comments")
+              .select("*")
+              .eq("entity_type", entityType)
+              .eq("entity_id", entityId)
+              .order("created_at", { ascending: true });
+            if (error) throw error;
+            const mapped = (data ?? []).map(mapProductivityCommentRow);
+            fallbackProductivityComments = mergeById(fallbackProductivityComments, mapped, (item) => item.commentId);
+            return mapped;
+          } catch (error) {
+            console.warn("[supabase] productivity.listComments fallback:", error instanceof Error ? error.message : error);
+            return fallback();
+          }
+        },
+        addComment: async (input) => {
+          try {
+            const payload: Database["public"]["Tables"]["productivity_comments"]["Insert"] = {
+              comment_id: input.commentId,
+              entity_type: input.entityType,
+              entity_id: input.entityId,
+              user_id: input.userId,
+              author_name: input.authorName ?? null,
+              body: input.body
+            };
+            const { data, error } = await admin.from("productivity_comments").insert(payload).select("*").single();
+            if (error || !data) throw error ?? new Error("Unable to add comment");
+            const mapped = mapProductivityCommentRow(data);
+            fallbackProductivityComments = mergeById(fallbackProductivityComments, [mapped], (item) => item.commentId);
+            return mapped;
+          } catch (error) {
+            console.warn("[supabase] productivity.addComment fallback:", error instanceof Error ? error.message : error);
+            const comment: ProductivityComment = {
+              commentId: input.commentId ?? generateId(),
+              entityType: input.entityType,
+              entityId: input.entityId,
+              userId: input.userId,
+              authorName: input.authorName ?? undefined,
+              body: input.body,
+              createdAt: Date.now()
+            };
+            fallbackProductivityComments = mergeById(fallbackProductivityComments, [comment], (item) => item.commentId);
+            return comment;
+          }
+        }
+      },
+      helpCenter: {
+      users: {
+        list: async () => {
+          const readFallback = () => [...fallbackHelpUsers].sort((a, b) => b.createdAt - a.createdAt);
+          try {
+            const { data, error } = await admin.from("User").select("*").order("createdAt", { ascending: false });
+            if (error) throw error;
+            const mapped = (data ?? []).map(mapHelpUserRow);
+            fallbackHelpUsers = mergeById(fallbackHelpUsers, mapped, (item) => item.id);
+            return mapped;
+          } catch (error) {
+            console.warn("[supabase] helpCenter.users.list fallback:", error instanceof Error ? error.message : error);
+            return readFallback();
+          }
+        },
+        upsert: async (input) => {
+          const existing = fallbackHelpUsers.find((entry) => entry.id === input.id);
+          const nowTs = Date.now();
+          const record: HelpUser = {
+            id: input.id,
+            email: input.email ?? existing?.email ?? `${input.id}@example.com`,
+            fullName: input.fullName ?? existing?.fullName,
+            avatarUrl: input.avatarUrl ?? existing?.avatarUrl,
+            phoneVerified: input.phoneVerified ?? existing?.phoneVerified ?? false,
+            idVerified: input.idVerified ?? existing?.idVerified ?? false,
+            trustLevel: input.trustLevel ?? existing?.trustLevel ?? "MEMBER",
+            createdAt: existing?.createdAt ?? nowTs,
+            updatedAt: nowTs,
+            about: input.about ?? existing?.about,
+            aboutGenerated: input.aboutGenerated ?? existing?.aboutGenerated,
+            location: input.location ?? existing?.location,
+            phone: input.phone ?? existing?.phone,
+            preferredCategories: input.preferredCategories ?? existing?.preferredCategories ?? [],
+            profileTags: input.profileTags ?? existing?.profileTags ?? [],
+            pronouns: input.pronouns ?? existing?.pronouns,
+            publicProfile: input.publicProfile ?? existing?.publicProfile ?? true,
+            radiusPreference: input.radiusPreference ?? existing?.radiusPreference ?? 5
+          };
+          const payload: Database["public"]["Tables"]["User"]["Insert"] = {
+            id: record.id,
+            email: record.email,
+            fullName: record.fullName ?? null,
+            avatarUrl: record.avatarUrl ?? null,
+            phoneVerified: record.phoneVerified,
+            idVerified: record.idVerified,
+            trustLevel: record.trustLevel,
+            createdAt: new Date(record.createdAt).toISOString(),
+            updatedAt: new Date(record.updatedAt).toISOString(),
+            about: record.about ?? null,
+            aboutGenerated: record.aboutGenerated ?? null,
+            location: record.location ?? null,
+            phone: record.phone ?? null,
+            preferredCategories: record.preferredCategories,
+            profileTags: record.profileTags,
+            pronouns: record.pronouns ?? null,
+            publicProfile: record.publicProfile,
+            radiusPreference: record.radiusPreference
+          };
+          try {
+            const { data, error } = await admin.from("User").upsert(payload, { onConflict: "id" }).select("*").single();
+            if (error || !data) {
+              throw error ?? new Error("Unable to upsert help user");
+            }
+            const mapped = mapHelpUserRow(data);
+            fallbackHelpUsers = mergeById(fallbackHelpUsers, [mapped], (item) => item.id);
+            return mapped;
+          } catch (error) {
+            console.warn("[supabase] helpCenter.users.upsert fallback:", error instanceof Error ? error.message : error);
+            fallbackHelpUsers = mergeById(fallbackHelpUsers, [record], (item) => item.id);
+            return record;
+          }
+        }
+      },
+      requests: {
+        list: async (input) => {
+          const status = input?.status;
+          const limit = input?.limit;
+          const readFallback = () =>
+            [...fallbackHelpRequests.filter((entry) => (status ? entry.status === status : true))]
+              .sort((a, b) => b.createdAt - a.createdAt)
+              .slice(0, limit ?? fallbackHelpRequests.length);
+          try {
+            let query = admin.from("HelpRequest").select("*").order("createdAt", { ascending: false });
+            if (status) {
+              query = query.eq("status", status);
+            }
+            if (limit) {
+              query = query.limit(limit);
+            }
+            const { data, error } = await query;
+            if (error) throw error;
+            const mapped = (data ?? []).map(mapHelpRequestRow);
+            fallbackHelpRequests = mergeById(fallbackHelpRequests, mapped, (item) => item.requestId);
+            return mapped;
+          } catch (error) {
+            console.warn("[supabase] helpCenter.requests.list fallback:", error instanceof Error ? error.message : error);
+            return readFallback();
+          }
+        },
+        create: async (input) => {
+          const nowTs = Date.now();
+          const record: HelpRequest = {
+            requestId: input.requestId ?? generateId(),
+            requesterId: input.requesterId,
+            title: input.title,
+            description: input.description,
+            summary: input.summary,
+            category: input.category,
+            urgency: input.urgency,
+            location: input.location,
+            status: input.status ?? "PUBLISHED",
+            aiChecklist: input.aiChecklist,
+            aiRiskScore: input.aiRiskScore ?? null,
+            createdAt: nowTs,
+            updatedAt: nowTs
+          };
+          const payload: Database["public"]["Tables"]["HelpRequest"]["Insert"] = {
+            id: record.requestId,
+            requesterId: record.requesterId,
+            title: record.title,
+            description: record.description,
+            summary: record.summary ?? null,
+            category: record.category,
+            urgency: record.urgency,
+            location: (record.location as Record<string, unknown>) ?? null,
+            status: record.status,
+            aiChecklist: record.aiChecklist ?? null,
+            aiRiskScore: record.aiRiskScore ?? null,
+            createdAt: new Date(record.createdAt).toISOString(),
+            updatedAt: new Date(record.updatedAt).toISOString()
+          };
+          try {
+            const { data, error } = await admin.from("HelpRequest").insert(payload).select("*").single();
+            if (error || !data) {
+              throw error ?? new Error("Unable to create help request");
+            }
+            const mapped = mapHelpRequestRow(data);
+            fallbackHelpRequests = mergeById(fallbackHelpRequests, [mapped], (item) => item.requestId);
+            return mapped;
+          } catch (error) {
+            console.warn("[supabase] helpCenter.requests.create fallback:", error instanceof Error ? error.message : error);
+            fallbackHelpRequests = mergeById(fallbackHelpRequests, [record], (item) => item.requestId);
+            return record;
+          }
+        },
+        update: async (requestId, data) => {
+          const patch: Database["public"]["Tables"]["HelpRequest"]["Update"] = {
+            updatedAt: new Date().toISOString()
+          };
+          if (data.title !== undefined) patch.title = data.title;
+          if (data.description !== undefined) patch.description = data.description;
+          if (data.summary !== undefined) patch.summary = data.summary ?? null;
+          if (data.category !== undefined) patch.category = data.category;
+          if (data.urgency !== undefined) patch.urgency = data.urgency;
+          if (data.location !== undefined) patch.location = (data.location as Record<string, unknown>) ?? null;
+          if (data.status !== undefined) patch.status = data.status;
+          if (data.aiChecklist !== undefined) patch.aiChecklist = data.aiChecklist ?? null;
+          if (data.aiRiskScore !== undefined) patch.aiRiskScore = data.aiRiskScore ?? null;
+          try {
+            const { data: row, error } = await admin
+              .from("HelpRequest")
+              .update(patch)
+              .eq("id", requestId)
+              .select("*")
+              .single();
+            if (error || !row) {
+              throw error ?? new Error("Help request not found");
+            }
+            const mapped = mapHelpRequestRow(row);
+            fallbackHelpRequests = mergeById(fallbackHelpRequests, [mapped], (item) => item.requestId);
+            return mapped;
+          } catch (error) {
+            console.warn("[supabase] helpCenter.requests.update fallback:", error instanceof Error ? error.message : error);
+            const existing = fallbackHelpRequests.find((entry) => entry.requestId === requestId);
+            if (!existing) throw error instanceof Error ? error : new Error("Help request not found");
+            const updated: HelpRequest = {
+              ...existing,
+              ...data,
+              location: data.location ?? existing.location,
+              aiChecklist: data.aiChecklist ?? existing.aiChecklist,
+              aiRiskScore: data.aiRiskScore ?? existing.aiRiskScore,
+              status: data.status ?? existing.status,
+              updatedAt: Date.now()
+            };
+            fallbackHelpRequests = mergeById(fallbackHelpRequests, [updated], (item) => item.requestId);
+            return updated;
+          }
+        }
+      },
+      offers: {
+        listForRequest: async (requestId) => {
+          const readFallback = () =>
+            [...fallbackHelpOffers.filter((offer) => offer.requestId === requestId)].sort((a, b) => b.createdAt - a.createdAt);
+          try {
+            const { data, error } = await admin
+              .from("HelpOffer")
+              .select("*")
+              .eq("requestId", requestId)
+              .order("createdAt", { ascending: false });
+            if (error) throw error;
+            const mapped = (data ?? []).map(mapHelpOfferRow);
+            fallbackHelpOffers = mergeById(fallbackHelpOffers, mapped, (item) => item.offerId);
+            return mapped;
+          } catch (error) {
+            console.warn("[supabase] helpCenter.offers.list fallback:", error instanceof Error ? error.message : error);
+            return readFallback();
+          }
+        },
+        create: async (input) => {
+          const nowTs = Date.now();
+          const record: HelpOffer = {
+            offerId: input.offerId ?? generateId(),
+            helperId: input.helperId,
+            requestId: input.requestId,
+            message: input.message,
+            status: input.status ?? "PENDING",
+            createdAt: nowTs,
+            updatedAt: nowTs
+          };
+          const payload: Database["public"]["Tables"]["HelpOffer"]["Insert"] = {
+            id: record.offerId,
+            helperId: record.helperId,
+            requestId: record.requestId,
+            message: record.message,
+            status: record.status,
+            createdAt: new Date(record.createdAt).toISOString(),
+            updatedAt: new Date(record.updatedAt).toISOString()
+          };
+          try {
+            const { data, error } = await admin.from("HelpOffer").insert(payload).select("*").single();
+            if (error || !data) {
+              throw error ?? new Error("Unable to create help offer");
+            }
+            const mapped = mapHelpOfferRow(data);
+            fallbackHelpOffers = mergeById(fallbackHelpOffers, [mapped], (item) => item.offerId);
+            return mapped;
+          } catch (error) {
+            console.warn("[supabase] helpCenter.offers.create fallback:", error instanceof Error ? error.message : error);
+            fallbackHelpOffers = mergeById(fallbackHelpOffers, [record], (item) => item.offerId);
+            return record;
+          }
+        },
+        updateStatus: async (offerId, status) => {
+          try {
+            const { data, error } = await admin
+              .from("HelpOffer")
+              .update({ status, updatedAt: new Date().toISOString() })
+              .eq("id", offerId)
+              .select("*")
+              .single();
+            if (error || !data) {
+              throw error ?? new Error("Help offer not found");
+            }
+            const mapped = mapHelpOfferRow(data);
+            fallbackHelpOffers = mergeById(fallbackHelpOffers, [mapped], (item) => item.offerId);
+            return mapped;
+          } catch (error) {
+            console.warn("[supabase] helpCenter.offers.updateStatus fallback:", error instanceof Error ? error.message : error);
+            const existing = fallbackHelpOffers.find((entry) => entry.offerId === offerId);
+            if (!existing) throw error instanceof Error ? error : new Error("Help offer not found");
+            const updated: HelpOffer = { ...existing, status, updatedAt: Date.now() };
+            fallbackHelpOffers = mergeById(fallbackHelpOffers, [updated], (item) => item.offerId);
+            return updated;
+          }
+        }
+      },
+      chats: {
+        listForRequest: async (requestId) => {
+          const readFallback = () =>
+            [...fallbackHelpChats.filter((chat) => chat.requestId === requestId)].sort((a, b) => b.updatedAt - a.updatedAt);
+          try {
+            const { data, error } = await admin
+              .from("Chat")
+              .select("*")
+              .eq("requestId", requestId)
+              .order("updatedAt", { ascending: false });
+            if (error) throw error;
+            const mapped = (data ?? []).map(mapHelpChatRow);
+            fallbackHelpChats = mergeById(fallbackHelpChats, mapped, (item) => item.chatId);
+            return mapped;
+          } catch (error) {
+            console.warn("[supabase] helpCenter.chats.list fallback:", error instanceof Error ? error.message : error);
+            return readFallback();
+          }
+        },
+        start: async (input) => {
+          const nowTs = Date.now();
+          const record: HelpChat = {
+            chatId: input.chatId ?? generateId(),
+            requestId: input.requestId,
+            helperId: input.helperId,
+            requesterId: input.requesterId,
+            consentLevel: input.consentLevel ?? "OFF",
+            createdAt: nowTs,
+            updatedAt: nowTs
+          };
+          const payload: Database["public"]["Tables"]["Chat"]["Insert"] = {
+            id: record.chatId,
+            requestId: record.requestId,
+            helperId: record.helperId,
+            requesterId: record.requesterId,
+            consentLevel: record.consentLevel,
+            createdAt: new Date(record.createdAt).toISOString(),
+            updatedAt: new Date(record.updatedAt).toISOString()
+          };
+          try {
+            const { data, error } = await admin.from("Chat").insert(payload).select("*").single();
+            if (error || !data) {
+              throw error ?? new Error("Unable to start help chat");
+            }
+            const mapped = mapHelpChatRow(data);
+            fallbackHelpChats = mergeById(fallbackHelpChats, [mapped], (item) => item.chatId);
+            return mapped;
+          } catch (error) {
+            console.warn("[supabase] helpCenter.chats.start fallback:", error instanceof Error ? error.message : error);
+            fallbackHelpChats = mergeById(fallbackHelpChats, [record], (item) => item.chatId);
+            return record;
+          }
+        }
+      },
+      messages: {
+        list: async (chatId) => {
+          const readFallback = () =>
+            [...fallbackHelpMessages.filter((message) => message.chatId === chatId)].sort((a, b) => a.createdAt - b.createdAt);
+          try {
+            const { data, error } = await admin
+              .from("Message")
+              .select("*")
+              .eq("chatId", chatId)
+              .order("createdAt", { ascending: true });
+            if (error) throw error;
+            const mapped = (data ?? []).map(mapHelpMessageRow);
+            fallbackHelpMessages = mergeById(fallbackHelpMessages, mapped, (item) => item.messageId);
+            return mapped;
+          } catch (error) {
+            console.warn("[supabase] helpCenter.messages.list fallback:", error instanceof Error ? error.message : error);
+            return readFallback();
+          }
+        },
+        send: async (input) => {
+          const record: HelpMessage = {
+            messageId: input.messageId ?? generateId(),
+            chatId: input.chatId,
+            authorId: input.authorId,
+            content: input.content,
+            aiRewrite: input.aiRewrite,
+            createdAt: Date.now()
+          };
+          const payload: Database["public"]["Tables"]["Message"]["Insert"] = {
+            id: record.messageId,
+            chatId: record.chatId,
+            authorId: record.authorId,
+            content: record.content,
+            aiRewrite: record.aiRewrite ?? null,
+            createdAt: new Date(record.createdAt).toISOString()
+          };
+          try {
+            const { data, error } = await admin.from("Message").insert(payload).select("*").single();
+            if (error || !data) {
+              throw error ?? new Error("Unable to send help message");
+            }
+            await admin.from("Chat").update({ updatedAt: new Date().toISOString() }).eq("id", record.chatId);
+            const mapped = mapHelpMessageRow(data);
+            fallbackHelpMessages = mergeById(fallbackHelpMessages, [mapped], (item) => item.messageId);
+            fallbackHelpChats = fallbackHelpChats.map((chat) =>
+              chat.chatId === record.chatId ? { ...chat, updatedAt: mapped.createdAt } : chat
+            );
+            return mapped;
+          } catch (error) {
+            console.warn("[supabase] helpCenter.messages.send fallback:", error instanceof Error ? error.message : error);
+            fallbackHelpMessages = mergeById(fallbackHelpMessages, [record], (item) => item.messageId);
+            fallbackHelpChats = fallbackHelpChats.map((chat) =>
+              chat.chatId === record.chatId ? { ...chat, updatedAt: record.createdAt } : chat
+            );
+            return record;
+          }
+        }
+      },
+      ratings: {
+        listForUser: async ({ helperId, requesterId }) => {
+          const readFallback = () =>
+            fallbackHelpRatings.filter((rating) => {
+              if (helperId && rating.helperId !== helperId) return false;
+              if (requesterId && rating.requesterId !== requesterId) return false;
+              return true;
+            });
+          try {
+            let query = admin.from("Rating").select("*");
+            if (helperId) query = query.eq("helperId", helperId);
+            if (requesterId) query = query.eq("requesterId", requesterId);
+            const { data, error } = await query;
+            if (error) throw error;
+            const mapped = (data ?? []).map(mapHelpRatingRow);
+            fallbackHelpRatings = mergeById(fallbackHelpRatings, mapped, (item) => item.ratingId);
+            return mapped;
+          } catch (error) {
+            console.warn("[supabase] helpCenter.ratings.list fallback:", error instanceof Error ? error.message : error);
+            return readFallback();
+          }
+        },
+        submit: async (input) => {
+          const record: HelpRating = {
+            ratingId: input.ratingId ?? generateId(),
+            score: input.score,
+            feedback: input.feedback,
+            helperId: input.helperId,
+            requesterId: input.requesterId,
+            requestId: input.requestId,
+            createdAt: Date.now()
+          };
+          const payload: Database["public"]["Tables"]["Rating"]["Insert"] = {
+            id: record.ratingId,
+            score: record.score,
+            feedback: record.feedback ?? null,
+            helperId: record.helperId,
+            requesterId: record.requesterId,
+            requestId: record.requestId,
+            createdAt: new Date(record.createdAt).toISOString()
+          };
+          try {
+            const { data, error } = await admin.from("Rating").insert(payload).select("*").single();
+            if (error || !data) {
+              throw error ?? new Error("Unable to submit rating");
+            }
+            const mapped = mapHelpRatingRow(data);
+            fallbackHelpRatings = mergeById(fallbackHelpRatings, [mapped], (item) => item.ratingId);
+            return mapped;
+          } catch (error) {
+            console.warn("[supabase] helpCenter.ratings.submit fallback:", error instanceof Error ? error.message : error);
+            fallbackHelpRatings = mergeById(fallbackHelpRatings, [record], (item) => item.ratingId);
+            return record;
+          }
+        }
+      },
+      verification: {
+        list: async (input) => {
+          const status = input?.status;
+          const readFallback = () =>
+            fallbackHelpVerifications.filter((entry) => (status ? entry.status === status : true));
+          try {
+            let query = admin.from("Verification").select("*").order("createdAt", { ascending: false });
+            if (status) query = query.eq("status", status);
+            const { data, error } = await query;
+            if (error) throw error;
+            const mapped = (data ?? []).map(mapHelpVerificationRow);
+            fallbackHelpVerifications = mergeById(fallbackHelpVerifications, mapped, (item) => item.verificationId);
+            return mapped;
+          } catch (error) {
+            console.warn("[supabase] helpCenter.verification.list fallback:", error instanceof Error ? error.message : error);
+            return readFallback();
+          }
+        },
+        submit: async (input) => {
+          const nowTs = Date.now();
+          const record: HelpVerificationRecord = {
+            verificationId: input.verificationId ?? generateId(),
+            userId: input.userId,
+            type: input.type,
+            status: input.status ?? "PENDING",
+            metadata: input.metadata,
+            createdAt: nowTs,
+            updatedAt: nowTs
+          };
+          const payload: Database["public"]["Tables"]["Verification"]["Insert"] = {
+            id: record.verificationId,
+            userId: record.userId,
+            type: record.type,
+            status: record.status,
+            metadata: record.metadata ?? null,
+            createdAt: new Date(record.createdAt).toISOString(),
+            updatedAt: new Date(record.updatedAt).toISOString()
+          };
+          try {
+            const { data, error } = await admin.from("Verification").insert(payload).select("*").single();
+            if (error || !data) {
+              throw error ?? new Error("Unable to submit verification");
+            }
+            const mapped = mapHelpVerificationRow(data);
+            fallbackHelpVerifications = mergeById(fallbackHelpVerifications, [mapped], (item) => item.verificationId);
+            return mapped;
+          } catch (error) {
+            console.warn("[supabase] helpCenter.verification.submit fallback:", error instanceof Error ? error.message : error);
+            fallbackHelpVerifications = mergeById(fallbackHelpVerifications, [record], (item) => item.verificationId);
+            return record;
+          }
+        },
+        updateStatus: async (verificationId, status) => {
+          try {
+            const { data, error } = await admin
+              .from("Verification")
+              .update({ status, updatedAt: new Date().toISOString() })
+              .eq("id", verificationId)
+              .select("*")
+              .single();
+            if (error || !data) {
+              throw error ?? new Error("Help verification not found");
+            }
+            const mapped = mapHelpVerificationRow(data);
+            fallbackHelpVerifications = mergeById(fallbackHelpVerifications, [mapped], (item) => item.verificationId);
+            return mapped;
+          } catch (error) {
+            console.warn(
+              "[supabase] helpCenter.verification.updateStatus fallback:",
+              error instanceof Error ? error.message : error
+            );
+            const existing = fallbackHelpVerifications.find((entry) => entry.verificationId === verificationId);
+            if (!existing) throw error instanceof Error ? error : new Error("Help verification not found");
+            const updated: HelpVerificationRecord = { ...existing, status, updatedAt: Date.now() };
+            fallbackHelpVerifications = mergeById(fallbackHelpVerifications, [updated], (item) => item.verificationId);
+            return updated;
+          }
+        }
+      },
+      moderation: {
+        list: async (input) => {
+          const entityType = input?.entityType;
+          const readFallback = () =>
+            fallbackHelpModerationLogs.filter((entry) => (entityType ? entry.entityType === entityType : true));
+          try {
+            let query = admin.from("ModerationLog").select("*").order("createdAt", { ascending: false });
+            if (entityType) query = query.eq("entityType", entityType);
+            const { data, error } = await query;
+            if (error) throw error;
+            const mapped = (data ?? []).map(mapHelpModerationLogRow);
+            fallbackHelpModerationLogs = mergeById(
+              fallbackHelpModerationLogs,
+              mapped,
+              (item) => item.moderationId
+            );
+            return mapped;
+          } catch (error) {
+            console.warn("[supabase] helpCenter.moderation.list fallback:", error instanceof Error ? error.message : error);
+            return readFallback();
+          }
+        },
+        log: async (input) => {
+          const record: HelpModerationLog = {
+            moderationId: input.moderationId ?? generateId(),
+            entityType: input.entityType,
+            entityId: input.entityId,
+            action: input.action,
+            notes: input.notes,
+            createdAt: Date.now(),
+            reviewedBy: input.reviewedBy,
+            metadata: input.metadata
+          };
+          const payload: Database["public"]["Tables"]["ModerationLog"]["Insert"] = {
+            id: record.moderationId,
+            entityType: record.entityType,
+            entityId: record.entityId,
+            action: record.action,
+            notes: record.notes ?? null,
+            createdAt: new Date(record.createdAt).toISOString(),
+            reviewedBy: record.reviewedBy ?? null,
+            metadata: record.metadata ?? null
+          };
+          try {
+            const { data, error } = await admin.from("ModerationLog").insert(payload).select("*").single();
+            if (error || !data) {
+              throw error ?? new Error("Unable to log moderation event");
+            }
+            const mapped = mapHelpModerationLogRow(data);
+            fallbackHelpModerationLogs = mergeById(
+              fallbackHelpModerationLogs,
+              [mapped],
+              (item) => item.moderationId
+            );
+            return mapped;
+          } catch (error) {
+            console.warn("[supabase] helpCenter.moderation.log fallback:", error instanceof Error ? error.message : error);
+            fallbackHelpModerationLogs = mergeById(
+              fallbackHelpModerationLogs,
+              [record],
+              (item) => item.moderationId
+            );
+            return record;
           }
         }
       }

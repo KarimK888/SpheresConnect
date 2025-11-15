@@ -159,6 +159,7 @@ export interface Order {
   status: "pending" | "paid" | "failed" | "refunded";
   stripePaymentIntentId?: string;
   createdAt: number;
+  metadata?: Record<string, unknown>;
 }
 
 export interface Event {
@@ -312,7 +313,192 @@ export interface SupportTicket {
   updatedAt?: number;
 }
 
+export interface ProductivityBoard {
+  boardId: string;
+  userId: string;
+  title: string;
+  description?: string;
+  createdAt: number;
+}
+
+export interface ProductivityColumn {
+  columnId: string;
+  boardId: string;
+  title: string;
+  position: number;
+  color?: string;
+  createdAt: number;
+}
+
+export interface ProductivityCard {
+  cardId: string;
+  columnId: string;
+  title: string;
+  description?: string;
+  labels: string[];
+  dueDate?: number;
+  assignees: string[];
+  metadata?: Record<string, unknown>;
+  position: number;
+  priority: "low" | "medium" | "high";
+  createdAt: number;
+}
+
+export interface ProductivityTodo {
+  todoId: string;
+  userId: string;
+  title: string;
+  completed: boolean;
+  dueDate?: number;
+  tags: string[];
+  priority: "low" | "medium" | "high";
+  createdAt: number;
+}
+
+export interface ProductivityCalendarEvent {
+  eventId: string;
+  userId: string;
+  title: string;
+  description?: string;
+  startAt: number;
+  endAt?: number;
+  location?: string;
+  color?: string;
+  metadata?: Record<string, unknown>;
+  createdAt: number;
+}
+
+export interface ProductivityComment {
+  commentId: string;
+  entityType: "card" | "todo";
+  entityId: string;
+  userId: string;
+  authorName?: string;
+  body: string;
+  createdAt: number;
+}
+
 export type Locale = "en" | "fr" | "es";
+
+export type ConsentLevel = "OFF" | "LIMITED" | "FULL" | (string & {});
+export type HelpRequestStatus = "PUBLISHED" | "MATCHED" | "IN_PROGRESS" | "COMPLETED" | "CANCELLED" | (string & {});
+export type HelpOfferStatus = "PENDING" | "ACCEPTED" | "DECLINED" | "WITHDRAWN" | (string & {});
+export type HelpUrgency = "LOW" | "MEDIUM" | "HIGH" | "CRITICAL" | (string & {});
+export type HelpCategory =
+  | "LOGISTICS"
+  | "PRODUCTION"
+  | "ADVOCACY"
+  | "FUNDRAISING"
+  | "SAFETY"
+  | "MEDICAL"
+  | (string & {});
+export type HelpTrustLevel = "MEMBER" | "ALLY" | "ADMIN" | (string & {});
+export type HelpVerificationStatus = "PENDING" | "APPROVED" | "REJECTED" | (string & {});
+
+export interface HelpLocation {
+  city?: string;
+  region?: string;
+  country?: string;
+  coordinates?: { lat: number; lng: number };
+  notes?: string;
+}
+
+export interface HelpUser {
+  id: string;
+  email: string;
+  fullName?: string;
+  avatarUrl?: string;
+  phoneVerified: boolean;
+  idVerified: boolean;
+  trustLevel: HelpTrustLevel;
+  createdAt: number;
+  updatedAt: number;
+  about?: string;
+  aboutGenerated?: string;
+  location?: string;
+  phone?: string;
+  preferredCategories: string[];
+  profileTags: string[];
+  pronouns?: string;
+  publicProfile: boolean;
+  radiusPreference: number;
+}
+
+export interface HelpRequest {
+  requestId: string;
+  requesterId: string;
+  title: string;
+  description: string;
+  summary?: string;
+  category: HelpCategory;
+  urgency: HelpUrgency;
+  location?: HelpLocation;
+  status: HelpRequestStatus;
+  aiChecklist?: Record<string, unknown>;
+  aiRiskScore?: number | null;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface HelpOffer {
+  offerId: string;
+  helperId: string;
+  requestId: string;
+  message: string;
+  status: HelpOfferStatus;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface HelpChat {
+  chatId: string;
+  requestId: string;
+  helperId: string;
+  requesterId: string;
+  consentLevel: ConsentLevel;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface HelpMessage {
+  messageId: string;
+  chatId: string;
+  authorId: string;
+  content: string;
+  aiRewrite?: string;
+  createdAt: number;
+}
+
+export interface HelpRating {
+  ratingId: string;
+  score: number;
+  feedback?: string;
+  helperId: string;
+  requesterId: string;
+  requestId: string;
+  createdAt: number;
+}
+
+export interface HelpVerificationRecord {
+  verificationId: string;
+  userId: string;
+  type: string;
+  status: HelpVerificationStatus;
+  metadata?: Record<string, unknown>;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface HelpModerationLog {
+  moderationId: string;
+  entityType: string;
+  entityId: string;
+  action: string;
+  notes?: string;
+  createdAt: number;
+  reviewedBy?: string;
+  metadata?: Record<string, unknown>;
+}
 
 export type MessageEvent =
   | { type: "message:created" | "message:updated" | "message:deleted" | "message:pinned"; chatId: string; message: ChatMessage }

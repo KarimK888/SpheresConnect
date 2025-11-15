@@ -4,7 +4,7 @@ import { createContext, useContext, useEffect } from "react";
 import { create } from "zustand";
 import { useSessionState } from "./session";
 import { getBackend } from "@/lib/backend";
-import type { MessageEvent, NotificationEntry } from "@/lib/types";
+import type { Hub, MessageEvent, NotificationEntry } from "@/lib/types";
 import { useI18n } from "./i18n";
 
 const makeId = () => {
@@ -19,6 +19,9 @@ export type NotificationKind = "message" | "system" | "marketplace";
 export const NOTIFICATION_HISTORY_WINDOW_MS = 1000 * 60 * 60 * 24 * 3;
 const HISTORY_LIMIT = 100;
 let notificationsUserId: string | null = null;
+const HUB_PRESENCE_ALERT_THRESHOLD = Number(process.env.NEXT_PUBLIC_HUB_PRESENCE_THRESHOLD ?? "8");
+const HUB_PRESENCE_ALERT_COOLDOWN_MS = 5 * 60 * 1000;
+const HUB_PRESENCE_ALERT_POLL_MS = 20000;
 
 const persistMarkState = (ids: string[] | undefined, read: boolean) => {
   if (!notificationsUserId) {
@@ -318,6 +321,84 @@ export const NotificationsProvider = ({ children }: { children: React.ReactNode 
       window.clearInterval(id);
     };
   }, [user]);
+
+  useEffect(() => {
+    if (!user || !HUB_PRESENCE_ALERT_THRESHOLD) {
+      return;
+    }
+    let cancelled = false;
+    const backend = getBackend();
+    let hubs: Hub[] = [];
+    const alertState = new Map<string, { count: number; timestamp: number }>();
+
+    const hydrateHubs = async () => {
+      try {
+        hubs = await backend.hubs.list();
+      } catch (error) {
+        console.warn("[notifications] hub directory failed", error);
+      }
+    };
+
+    const pollPresence = async () => {
+      try {
+        const snapshot = await backend.checkins.listActive({});
+        if (cancelled) return;
+        const grouped = snapshot.reduce<Record<string, number>>((acc, entry) => {
+          if (entry.hubId) {
+            acc[entry.hubId] = (acc[entry.hubId] ?? 0) + 1;
+          }
+          return acc;
+        }, {});
+        const now = Date.now();
+        for (const hub of hubs) {
+          if (!hub.activeUsers?.includes(user.userId)) continue;
+          const count = grouped[hub.hubId] ?? 0;
+          const previous = alertState.get(hub.hubId);
+          if (count < HUB_PRESENCE_ALERT_THRESHOLD) {
+            alertState.set(hub.hubId, { count, timestamp: now });
+            continue;
+          }
+          if (
+            previous &&
+            previous.count >= HUB_PRESENCE_ALERT_THRESHOLD &&
+            now - previous.timestamp < HUB_PRESENCE_ALERT_COOLDOWN_MS &&
+            count <= previous.count
+          ) {
+            continue;
+          }
+          alertState.set(hub.hubId, { count, timestamp: now });
+          const store = useNotificationStore.getState();
+          const existing = store.items.find(
+            (item) =>
+              item.link?.includes(`/hub-map?hub=${hub.hubId}`) &&
+              now - item.createdAt < HUB_PRESENCE_ALERT_COOLDOWN_MS
+          );
+          if (existing) continue;
+          store.add({
+            id: `hub-presence-${hub.hubId}-${now}`,
+            kind: "system",
+            title: t("notifications_live_hub_title", { hub: hub.name }),
+            body: t("notifications_live_hub_body", { count }),
+            link: `/hub-map?hub=${hub.hubId}`,
+            createdAt: now
+          });
+        }
+      } catch (error) {
+        if (!cancelled) {
+          console.warn("[notifications] presence poll failed", error);
+        }
+      }
+    };
+
+    void hydrateHubs().then(pollPresence);
+    const id = window.setInterval(() => {
+      void pollPresence();
+    }, HUB_PRESENCE_ALERT_POLL_MS);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, [t, user]);
 
   return <NotificationsContext.Provider value={true}>{children}</NotificationsContext.Provider>;
 };

@@ -41,8 +41,11 @@ export const AppShell = ({ children }: { children: React.ReactNode }) => {
       { href: "/profiles", label: t("nav_profiles") },
       { href: "/messages", label: t("nav_messages") },
       { href: "/marketplace", label: t("nav_marketplace") },
+      { href: "/marketplace/orders", label: t("nav_orders") },
+      { href: "/productivity", label: t("nav_productivity") },
       { href: "/events", label: t("nav_events") },
-      { href: "/rewards", label: t("nav_rewards") }
+      { href: "/rewards", label: t("nav_rewards") },
+      { href: "/help-center", label: t("nav_help_center") }
     ],
     [t]
   );

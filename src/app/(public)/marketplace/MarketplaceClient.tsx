@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import Image from "next/image";
+import { useRouter } from "next/navigation";
 import { Sparkles, Search, PlusCircle, XCircle, Trash2 } from "lucide-react";
 import { ArtworkCard } from "@/components/ArtworkCard";
 import { Button } from "@/components/ui/button";
@@ -637,6 +638,7 @@ const ListingDetailOverlay = ({
   deleteBusy
 }: ListingDetailOverlayProps) => {
   const { t } = useI18n();
+  const router = useRouter();
   const isOwner = artwork.artistId === sessionUserId;
 
   return (
@@ -743,7 +745,18 @@ const ListingDetailOverlay = ({
                 </Button>
               </div>
             ) : (
-              <p className="text-sm text-muted-foreground">{t("marketplace_detail_description")}</p>
+              <div className="space-y-3">
+                {artwork.status === "sold" ? (
+                  <p className="text-sm text-muted-foreground">{t("marketplace_detail_sold")}</p>
+                ) : (
+                  <>
+                    <p className="text-sm text-muted-foreground">{t("marketplace_detail_checkout_hint")}</p>
+                    <Button className="w-full" onClick={() => router.push(`/marketplace/checkout/${artwork.artworkId}`)}>
+                      {t("checkout_cta_buy")}
+                    </Button>
+                  </>
+                )}
+              </div>
             )}
           </div>
         </div>

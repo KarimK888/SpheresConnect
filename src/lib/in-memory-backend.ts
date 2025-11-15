@@ -10,7 +10,21 @@ import {
   sampleEvents,
   sampleRewardLogs,
   sampleMatchActions,
-  verifiedAdminId
+  verifiedAdminId,
+  sampleHelpUsers,
+  sampleHelpRequests,
+  sampleHelpOffers,
+  sampleHelpChats,
+  sampleHelpMessages,
+  sampleHelpRatings,
+  sampleHelpVerifications,
+  sampleHelpModerationLogs,
+  sampleProductivityBoards,
+  sampleProductivityColumns,
+  sampleProductivityCards,
+  sampleProductivityTodos,
+  sampleProductivityEvents,
+  sampleProductivityComments
 } from "./sample-data";
 import type {
   Artwork,
@@ -18,6 +32,14 @@ import type {
   ChatMessage,
   Checkin,
   Event,
+  HelpChat,
+  HelpMessage,
+  HelpModerationLog,
+  HelpOffer,
+  HelpRating,
+  HelpRequest,
+  HelpUser,
+  HelpVerificationRecord,
   Hub,
   MatchAction,
   MatchActionResult,
@@ -35,7 +57,13 @@ import type {
   NotificationEntry,
   VerificationRequest,
   ModerationQueueItem,
-  SupportTicket
+  SupportTicket,
+  ProductivityBoard,
+  ProductivityColumn,
+  ProductivityCard,
+  ProductivityTodo,
+  ProductivityCalendarEvent,
+  ProductivityComment
 } from "./types";
 
 interface InMemoryStore {
@@ -58,6 +86,20 @@ interface InMemoryStore {
   verificationRequests: VerificationRequest[];
   moderationQueue: ModerationQueueItem[];
   supportTickets: SupportTicket[];
+  helpUsers: HelpUser[];
+  helpRequests: HelpRequest[];
+  helpOffers: HelpOffer[];
+  helpChats: HelpChat[];
+  helpMessages: HelpMessage[];
+  helpRatings: HelpRating[];
+  helpVerifications: HelpVerificationRecord[];
+  helpModerationLogs: HelpModerationLog[];
+  productivityBoards: ProductivityBoard[];
+  productivityColumns: ProductivityColumn[];
+  productivityCards: ProductivityCard[];
+  productivityTodos: ProductivityTodo[];
+  productivityEvents: ProductivityCalendarEvent[];
+  productivityComments: ProductivityComment[];
   session: AuthSession | null;
 }
 
@@ -82,6 +124,20 @@ const stores: Record<"firebase" | "supabase", InMemoryStore> = {
     verificationRequests: [],
     moderationQueue: [],
     supportTickets: [],
+    helpUsers: structuredClone(sampleHelpUsers),
+    helpRequests: structuredClone(sampleHelpRequests),
+    helpOffers: structuredClone(sampleHelpOffers),
+    helpChats: structuredClone(sampleHelpChats),
+    helpMessages: structuredClone(sampleHelpMessages),
+    helpRatings: structuredClone(sampleHelpRatings),
+    helpVerifications: structuredClone(sampleHelpVerifications),
+    helpModerationLogs: structuredClone(sampleHelpModerationLogs),
+    productivityBoards: structuredClone(sampleProductivityBoards),
+    productivityColumns: structuredClone(sampleProductivityColumns),
+    productivityCards: structuredClone(sampleProductivityCards),
+    productivityTodos: structuredClone(sampleProductivityTodos),
+    productivityEvents: structuredClone(sampleProductivityEvents),
+    productivityComments: structuredClone(sampleProductivityComments),
     session: null
   },
   supabase: {
@@ -104,6 +160,20 @@ const stores: Record<"firebase" | "supabase", InMemoryStore> = {
     verificationRequests: [],
     moderationQueue: [],
     supportTickets: [],
+    helpUsers: structuredClone(sampleHelpUsers),
+    helpRequests: structuredClone(sampleHelpRequests),
+    helpOffers: structuredClone(sampleHelpOffers),
+    helpChats: structuredClone(sampleHelpChats),
+    helpMessages: structuredClone(sampleHelpMessages),
+    helpRatings: structuredClone(sampleHelpRatings),
+    helpVerifications: structuredClone(sampleHelpVerifications),
+    helpModerationLogs: structuredClone(sampleHelpModerationLogs),
+    productivityBoards: structuredClone(sampleProductivityBoards),
+    productivityColumns: structuredClone(sampleProductivityColumns),
+    productivityCards: structuredClone(sampleProductivityCards),
+    productivityTodos: structuredClone(sampleProductivityTodos),
+    productivityEvents: structuredClone(sampleProductivityEvents),
+    productivityComments: structuredClone(sampleProductivityComments),
     session: null
   }
 };
@@ -358,6 +428,192 @@ export const createInMemoryBackend = (provider: "firebase" | "supabase"): Backen
       getSession: async () => store.session,
       logout: async () => {
         store.session = null;
+      }
+    },
+    productivity: {
+      fetch: async (userId) => {
+        const boards = store.productivityBoards.filter((board) => board.userId === userId);
+        const boardIds = new Set(boards.map((board) => board.boardId));
+        const columns = store.productivityColumns
+          .filter((column) => boardIds.has(column.boardId))
+          .sort((a, b) => a.position - b.position);
+        const columnIds = new Set(columns.map((column) => column.columnId));
+        const cards = store.productivityCards
+          .filter((card) => columnIds.has(card.columnId))
+          .sort((a, b) => a.position - b.position);
+        const todos = store.productivityTodos.filter((todo) => todo.userId === userId).sort((a, b) => b.createdAt - a.createdAt);
+        const events = store.productivityEvents.filter((event) => event.userId === userId).sort((a, b) => a.startAt - b.startAt);
+        const cardIds = new Set(cards.map((card) => card.cardId));
+        const todoIds = new Set(todos.map((todo) => todo.todoId));
+        const comments = store.productivityComments.filter(
+          (comment) =>
+            (comment.entityType === "card" && cardIds.has(comment.entityId)) ||
+            (comment.entityType === "todo" && todoIds.has(comment.entityId))
+        );
+        return { boards, columns, cards, todos, events, comments };
+      },
+      createCard: async (input) => {
+        const column = store.productivityColumns.find((col) => col.columnId === input.columnId);
+        if (!column) throw new Error("Column not found");
+        const board = store.productivityBoards.find((b) => b.boardId === column.boardId);
+        if (!board || board.userId !== input.userId) throw new Error("Not authorized");
+        const position = input.position ?? store.productivityCards.filter((c) => c.columnId === column.columnId).length;
+        const card: ProductivityCard = {
+          cardId: randomId("prod_card"),
+          columnId: column.columnId,
+          title: input.title,
+          description: input.description ?? undefined,
+          labels: input.labels ?? [],
+          dueDate: input.dueDate,
+          assignees: input.assignees ?? [],
+          metadata: input.metadata,
+          position,
+          priority: input.priority ?? "medium",
+          createdAt: Date.now()
+        };
+        store.productivityCards = [...store.productivityCards, card];
+        return card;
+      },
+      moveCard: async ({ cardId, columnId, position }) => {
+        const card = store.productivityCards.find((item) => item.cardId === cardId);
+        if (!card) throw new Error("Card not found");
+        const column = store.productivityColumns.find((col) => col.columnId === columnId);
+        if (!column) throw new Error("Column not found");
+        const board = store.productivityBoards.find((b) => b.boardId === column.boardId);
+        if (!board) throw new Error("Board missing");
+        store.productivityCards = store.productivityCards.map((item) =>
+          item.cardId === cardId ? { ...item, columnId, position } : item
+        );
+        return store.productivityCards.find((item) => item.cardId === cardId)!;
+      },
+      updateCard: async (cardId, data) => {
+        let updated: ProductivityCard | undefined;
+        store.productivityCards = store.productivityCards.map((card) => {
+          if (card.cardId === cardId) {
+            updated = {
+              ...card,
+              ...data,
+              labels: data.labels ?? card.labels,
+              assignees: data.assignees ?? card.assignees,
+              metadata: data.metadata ?? card.metadata,
+              position: data.position ?? card.position,
+              columnId: data.columnId ?? card.columnId,
+              dueDate: data.dueDate ?? card.dueDate,
+              priority: data.priority ?? card.priority
+            };
+            return updated!;
+          }
+          return card;
+        });
+        if (!updated) {
+          throw new Error("Card not found");
+        }
+        return updated;
+      },
+      createTodo: async (input) => {
+        const todo: ProductivityTodo = {
+          todoId: randomId("prod_todo"),
+          userId: input.userId,
+          title: input.title,
+          completed: input.completed ?? false,
+          dueDate: input.dueDate,
+          tags: input.tags ?? [],
+          priority: input.priority ?? "medium",
+          createdAt: Date.now()
+        };
+        store.productivityTodos = [todo, ...store.productivityTodos.filter((entry) => entry.todoId !== todo.todoId)];
+        return todo;
+      },
+      updateTodo: async (todoId, data) => {
+        let updated: ProductivityTodo | undefined;
+        store.productivityTodos = store.productivityTodos.map((todo) => {
+          if (todo.todoId === todoId) {
+            updated = {
+              ...todo,
+              ...data,
+              tags: data.tags ?? todo.tags,
+              priority: data.priority ?? todo.priority,
+              dueDate: data.dueDate ?? todo.dueDate,
+              title: data.title ?? todo.title
+            };
+            return updated;
+          }
+          return todo;
+        });
+        if (!updated) throw new Error("Todo not found");
+        return updated;
+      },
+      toggleTodo: async (todoId, completed) => {
+        let updated: ProductivityTodo | undefined;
+        store.productivityTodos = store.productivityTodos.map((todo) => {
+          if (todo.todoId === todoId) {
+            updated = { ...todo, completed };
+            return updated;
+          }
+          return todo;
+        });
+        if (!updated) throw new Error("Todo not found");
+        return updated;
+      },
+      deleteTodo: async (todoId) => {
+        store.productivityTodos = store.productivityTodos.filter((todo) => todo.todoId !== todoId);
+      },
+      createEvent: async (input) => {
+        const event: ProductivityCalendarEvent = {
+          eventId: input.eventId ?? randomId("prod_evt"),
+          userId: input.userId,
+          title: input.title,
+          description: input.description ?? undefined,
+          startAt: input.startAt,
+          endAt: input.endAt,
+          location: input.location ?? undefined,
+          color: input.color ?? undefined,
+          metadata: input.metadata ?? undefined,
+          createdAt: Date.now()
+        };
+        store.productivityEvents = [
+          event,
+          ...store.productivityEvents.filter((entry) => entry.eventId !== event.eventId)
+        ];
+        return event;
+      },
+      updateEvent: async (eventId, data) => {
+        let updated: ProductivityCalendarEvent | undefined;
+        store.productivityEvents = store.productivityEvents.map((event) => {
+          if (event.eventId === eventId) {
+            updated = {
+              ...event,
+              ...data,
+              metadata: data.metadata ?? event.metadata
+            };
+            return updated;
+          }
+          return event;
+        });
+        if (!updated) {
+          throw new Error("Event not found");
+        }
+        return updated;
+      },
+      deleteEvent: async (eventId) => {
+        store.productivityEvents = store.productivityEvents.filter((event) => event.eventId !== eventId);
+      },
+      listComments: async ({ entityType, entityId }) =>
+        store.productivityComments
+          .filter((comment) => comment.entityType === entityType && comment.entityId === entityId)
+          .sort((a, b) => a.createdAt - b.createdAt),
+      addComment: async (input) => {
+        const comment: ProductivityComment = {
+          commentId: input.commentId ?? randomId("prod_comment"),
+          entityType: input.entityType,
+          entityId: input.entityId,
+          userId: input.userId,
+          authorName: input.authorName ?? undefined,
+          body: input.body,
+          createdAt: Date.now()
+        };
+        store.productivityComments = [...store.productivityComments, comment];
+        return comment;
       }
     },
     users: {
@@ -840,7 +1096,7 @@ export const createInMemoryBackend = (provider: "firebase" | "supabase"): Backen
       }
     },
     orders: {
-      createPaymentIntent: async ({ artworkId, buyerId }) => {
+      createPaymentIntent: async ({ artworkId, buyerId, metadata }) => {
         const artwork = store.artworks.find((art) => art.artworkId === artworkId);
         if (!artwork) {
           throw new Error("Artwork not found");
@@ -854,7 +1110,8 @@ export const createInMemoryBackend = (provider: "firebase" | "supabase"): Backen
           currency: artwork.currency,
           status: "pending",
           stripePaymentIntentId: randomId("pi"),
-          createdAt: Date.now()
+          createdAt: Date.now(),
+          metadata
         };
         store.orders.push(order);
         return {
@@ -878,6 +1135,18 @@ export const createInMemoryBackend = (provider: "firebase" | "supabase"): Backen
           persistArtworksToStorage(provider);
         }
         return updated;
+      },
+      get: async (orderId) => {
+        return store.orders.find((order) => order.orderId === orderId) ?? null;
+      },
+      listForUser: async ({ userId, role = "all" }) => {
+        return store.orders
+          .filter((order) => {
+            if (role === "buyer") return order.buyerId === userId;
+            if (role === "seller") return order.sellerId === userId;
+            return order.buyerId === userId || order.sellerId === userId;
+          })
+          .sort((a, b) => b.createdAt - a.createdAt);
       }
     },
     events: {
@@ -1329,6 +1598,229 @@ export const createInMemoryBackend = (provider: "firebase" | "supabase"): Backen
             throw new Error("Support ticket not found");
           }
           return updated;
+        }
+      }
+    },
+    helpCenter: {
+      users: {
+        list: async () => [...store.helpUsers].sort((a, b) => b.createdAt - a.createdAt),
+        upsert: async (input) => {
+          const existing = store.helpUsers.find((entry) => entry.id === input.id);
+          const nowTs = Date.now();
+          const payload: HelpUser = {
+            id: input.id,
+            email: input.email ?? existing?.email ?? `${input.id}@example.com`,
+            fullName: input.fullName ?? existing?.fullName,
+            avatarUrl: input.avatarUrl ?? existing?.avatarUrl,
+            phoneVerified: input.phoneVerified ?? existing?.phoneVerified ?? false,
+            idVerified: input.idVerified ?? existing?.idVerified ?? false,
+            trustLevel: input.trustLevel ?? existing?.trustLevel ?? "MEMBER",
+            createdAt: existing?.createdAt ?? nowTs,
+            updatedAt: nowTs,
+            about: input.about ?? existing?.about,
+            aboutGenerated: input.aboutGenerated ?? existing?.aboutGenerated,
+            location: input.location ?? existing?.location,
+            phone: input.phone ?? existing?.phone,
+            preferredCategories: input.preferredCategories ?? existing?.preferredCategories ?? [],
+            profileTags: input.profileTags ?? existing?.profileTags ?? [],
+            pronouns: input.pronouns ?? existing?.pronouns,
+            publicProfile: input.publicProfile ?? existing?.publicProfile ?? true,
+            radiusPreference: input.radiusPreference ?? existing?.radiusPreference ?? 5
+          };
+          store.helpUsers = [payload, ...store.helpUsers.filter((entry) => entry.id !== payload.id)];
+          return payload;
+        }
+      },
+      requests: {
+        list: async (input) =>
+          store.helpRequests
+            .filter((entry) => (input?.status ? entry.status === input.status : true))
+            .sort((a, b) => b.createdAt - a.createdAt)
+            .slice(0, input?.limit ?? store.helpRequests.length),
+        create: async (input) => {
+          const nowTs = Date.now();
+          const request: HelpRequest = {
+            requestId: input.requestId ?? randomId("help_req"),
+            requesterId: input.requesterId,
+            title: input.title,
+            description: input.description,
+            summary: input.summary,
+            category: input.category,
+            urgency: input.urgency,
+            location: input.location,
+            status: input.status ?? "PUBLISHED",
+            aiChecklist: input.aiChecklist,
+            aiRiskScore: input.aiRiskScore ?? null,
+            createdAt: nowTs,
+            updatedAt: nowTs
+          };
+          store.helpRequests = [request, ...store.helpRequests.filter((entry) => entry.requestId !== request.requestId)];
+          return request;
+        },
+        update: async (requestId, data) => {
+          let updated: HelpRequest | undefined;
+          store.helpRequests = store.helpRequests.map((entry) => {
+            if (entry.requestId === requestId) {
+              updated = {
+                ...entry,
+                ...data,
+                location: data.location ?? entry.location,
+                aiChecklist: data.aiChecklist ?? entry.aiChecklist,
+                aiRiskScore: data.aiRiskScore ?? entry.aiRiskScore,
+                status: data.status ?? entry.status,
+                updatedAt: Date.now()
+              };
+              return updated;
+            }
+            return entry;
+          });
+          if (!updated) {
+            throw new Error("Help request not found");
+          }
+          return updated;
+        }
+      },
+      offers: {
+        listForRequest: async (requestId) =>
+          store.helpOffers.filter((offer) => offer.requestId === requestId).sort((a, b) => b.createdAt - a.createdAt),
+        create: async (input) => {
+          const nowTs = Date.now();
+          const offer: HelpOffer = {
+            offerId: input.offerId ?? randomId("help_offer"),
+            helperId: input.helperId,
+            requestId: input.requestId,
+            message: input.message,
+            status: input.status ?? "PENDING",
+            createdAt: nowTs,
+            updatedAt: nowTs
+          };
+          store.helpOffers = [offer, ...store.helpOffers.filter((entry) => entry.offerId !== offer.offerId)];
+          return offer;
+        },
+        updateStatus: async (offerId, status) => {
+          let updated: HelpOffer | undefined;
+          store.helpOffers = store.helpOffers.map((offer) => {
+            if (offer.offerId === offerId) {
+              updated = { ...offer, status, updatedAt: Date.now() };
+              return updated;
+            }
+            return offer;
+          });
+          if (!updated) {
+            throw new Error("Help offer not found");
+          }
+          return updated;
+        }
+      },
+      chats: {
+        listForRequest: async (requestId) =>
+          store.helpChats.filter((chat) => chat.requestId === requestId).sort((a, b) => b.updatedAt - a.updatedAt),
+        start: async (input) => {
+          const nowTs = Date.now();
+          const chat: HelpChat = {
+            chatId: input.chatId ?? randomId("help_chat"),
+            requestId: input.requestId,
+            helperId: input.helperId,
+            requesterId: input.requesterId,
+            consentLevel: input.consentLevel ?? "OFF",
+            createdAt: nowTs,
+            updatedAt: nowTs
+          };
+          store.helpChats = [chat, ...store.helpChats.filter((entry) => entry.chatId !== chat.chatId)];
+          return chat;
+        }
+      },
+      messages: {
+        list: async (chatId) =>
+          store.helpMessages.filter((message) => message.chatId === chatId).sort((a, b) => a.createdAt - b.createdAt),
+        send: async (input) => {
+          const message: HelpMessage = {
+            messageId: input.messageId ?? randomId("help_msg"),
+            chatId: input.chatId,
+            authorId: input.authorId,
+            content: input.content,
+            aiRewrite: input.aiRewrite,
+            createdAt: Date.now()
+          };
+          store.helpMessages = [...store.helpMessages, message];
+          store.helpChats = store.helpChats.map((chat) =>
+            chat.chatId === input.chatId ? { ...chat, updatedAt: message.createdAt } : chat
+          );
+          return message;
+        }
+      },
+      ratings: {
+        listForUser: async ({ helperId, requesterId }) =>
+          store.helpRatings.filter((rating) => {
+            if (helperId && rating.helperId !== helperId) return false;
+            if (requesterId && rating.requesterId !== requesterId) return false;
+            return true;
+          }),
+        submit: async (input) => {
+          const rating: HelpRating = {
+            ratingId: input.ratingId ?? randomId("help_rating"),
+            score: input.score,
+            feedback: input.feedback,
+            helperId: input.helperId,
+            requesterId: input.requesterId,
+            requestId: input.requestId,
+            createdAt: Date.now()
+          };
+          store.helpRatings = [rating, ...store.helpRatings.filter((entry) => entry.ratingId !== rating.ratingId)];
+          return rating;
+        }
+      },
+      verification: {
+        list: async (input) =>
+          store.helpVerifications.filter((entry) => (input?.status ? entry.status === input.status : true)),
+        submit: async (input) => {
+          const nowTs = Date.now();
+          const record: HelpVerificationRecord = {
+            verificationId: input.verificationId ?? randomId("help_verify"),
+            userId: input.userId,
+            type: input.type,
+            status: input.status ?? "PENDING",
+            metadata: input.metadata,
+            createdAt: nowTs,
+            updatedAt: nowTs
+          };
+          store.helpVerifications = [
+            record,
+            ...store.helpVerifications.filter((entry) => entry.verificationId !== record.verificationId)
+          ];
+          return record;
+        },
+        updateStatus: async (verificationId, status) => {
+          let updated: HelpVerificationRecord | undefined;
+          store.helpVerifications = store.helpVerifications.map((entry) => {
+            if (entry.verificationId === verificationId) {
+              updated = { ...entry, status, updatedAt: Date.now() };
+              return updated;
+            }
+            return entry;
+          });
+          if (!updated) {
+            throw new Error("Help verification not found");
+          }
+          return updated;
+        }
+      },
+      moderation: {
+        list: async (input) =>
+          store.helpModerationLogs.filter((entry) => (input?.entityType ? entry.entityType === input.entityType : true)),
+        log: async (input) => {
+          const entry: HelpModerationLog = {
+            moderationId: input.moderationId ?? randomId("help_mod"),
+            entityType: input.entityType,
+            entityId: input.entityId,
+            action: input.action,
+            notes: input.notes,
+            createdAt: Date.now(),
+            reviewedBy: input.reviewedBy,
+            metadata: input.metadata
+          };
+          store.helpModerationLogs = [entry, ...store.helpModerationLogs.filter((log) => log.moderationId !== entry.moderationId)];
+          return entry;
         }
       }
     }

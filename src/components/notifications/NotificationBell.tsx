@@ -17,6 +17,9 @@ export const NotificationBell = () => {
   const [open, setOpen] = useState(false);
   const panelRef = useRef<HTMLDivElement | null>(null);
   const unreadCount = useNotifications((state) => state.items.filter((item) => !item.read).length);
+  const unreadChatCount = useNotifications(
+    (state) => state.items.filter((item) => item.kind === "message" && !item.read).length
+  );
   const items = useNotifications((state) => state.items);
   const muted = useNotifications((state) => state.muted);
   const mutedChats = useNotifications((state) => state.mutedChats);
@@ -74,9 +77,16 @@ export const NotificationBell = () => {
         >
           <div className="flex items-center justify-between text-xs uppercase tracking-[0.3em] text-muted-foreground">
             <span>{t("notifications_title")}</span>
-            <button type="button" className="text-white" onClick={toggleMute}>
-              {muted ? t("notifications_unmute_all") : t("notifications_mute_all")}
-            </button>
+            <div className="flex items-center gap-2">
+              {unreadChatCount > 0 && (
+                <span className="rounded-full bg-border/40 px-2 py-0.5 text-[10px] font-semibold text-white">
+                  {t("notifications_unread_chats", { count: unreadChatCount })}
+                </span>
+              )}
+              <button type="button" className="text-white" onClick={toggleMute}>
+                {muted ? t("notifications_unmute_all") : t("notifications_mute_all")}
+              </button>
+            </div>
           </div>
           <div className="mt-3 max-h-80 space-y-2 overflow-y-auto">
             {recentItems.length ? (
@@ -91,7 +101,8 @@ export const NotificationBell = () => {
                   }
                   setOpen(false);
                 };
-                const openLink = (href: string, isChatLink?: boolean) => {
+                const openLink = (href?: string, isChatLink?: boolean) => {
+                  if (!href) return;
                   markRead(item.id);
                   if (isChatLink && item.chatId) {
                     markChatRead(item.chatId);

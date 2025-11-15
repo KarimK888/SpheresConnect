@@ -5,7 +5,20 @@ import {
   sampleEvents,
   sampleCheckins,
   sampleRewardLogs,
-  sampleMatchActions
+  sampleMatchActions,
+  sampleHelpUsers,
+  sampleHelpRequests,
+  sampleHelpOffers,
+  sampleHelpChats,
+  sampleHelpMessages,
+  sampleHelpRatings,
+  sampleHelpVerifications,
+  sampleHelpModerationLogs,
+  sampleProductivityBoards,
+  sampleProductivityColumns,
+  sampleProductivityCards,
+  sampleProductivityTodos,
+  sampleProductivityEvents
 } from "../src/lib/sample-data.js";
 
 const literal = (value: string) => `'${value.replace(/'/g, "''")}'`;
@@ -271,6 +284,489 @@ INSERT INTO public.match_actions (
 ON CONFLICT (id) DO UPDATE SET
   target_id = EXCLUDED.target_id,
   action = EXCLUDED.action,
+  created_at = EXCLUDED.created_at;`);
+}
+
+if (sampleHelpUsers.length) {
+  const rows = sampleHelpUsers
+    .map((user) => {
+      const values = [
+        literal(user.id),
+        literal(user.email),
+        optionalLiteral(user.fullName),
+        optionalLiteral(user.avatarUrl),
+        booleanLiteral(user.phoneVerified),
+        booleanLiteral(user.idVerified),
+        literal(user.trustLevel),
+        isoLiteral(user.createdAt),
+        isoLiteral(user.updatedAt),
+        optionalLiteral(user.about),
+        optionalLiteral(user.aboutGenerated),
+        optionalLiteral(user.location),
+        optionalLiteral(user.phone),
+        arrayLiteral(user.preferredCategories, "text"),
+        arrayLiteral(user.profileTags, "text"),
+        optionalLiteral(user.pronouns),
+        booleanLiteral(user.publicProfile),
+        user.radiusPreference.toString()
+      ];
+      return `(${values.join(", ")})`;
+    })
+    .join(",\n  ");
+  sections.push(`-- Help users
+INSERT INTO "User" (
+  "id",
+  "email",
+  "fullName",
+  "avatarUrl",
+  "phoneVerified",
+  "idVerified",
+  "trustLevel",
+  "createdAt",
+  "updatedAt",
+  "about",
+  "aboutGenerated",
+  "location",
+  "phone",
+  "preferredCategories",
+  "profileTags",
+  "pronouns",
+  "publicProfile",
+  "radiusPreference"
+) VALUES
+  ${rows}
+ON CONFLICT ("id") DO UPDATE SET
+  "email" = EXCLUDED."email",
+  "fullName" = EXCLUDED."fullName",
+  "avatarUrl" = EXCLUDED."avatarUrl",
+  "phoneVerified" = EXCLUDED."phoneVerified",
+  "idVerified" = EXCLUDED."idVerified",
+  "trustLevel" = EXCLUDED."trustLevel",
+  "updatedAt" = EXCLUDED."updatedAt",
+  "about" = EXCLUDED."about",
+  "aboutGenerated" = EXCLUDED."aboutGenerated",
+  "location" = EXCLUDED."location",
+  "phone" = EXCLUDED."phone",
+  "preferredCategories" = EXCLUDED."preferredCategories",
+  "profileTags" = EXCLUDED."profileTags",
+  "pronouns" = EXCLUDED."pronouns",
+  "publicProfile" = EXCLUDED."publicProfile",
+  "radiusPreference" = EXCLUDED."radiusPreference";`);
+}
+
+if (sampleHelpRequests.length) {
+  const rows = sampleHelpRequests
+    .map((request) => {
+      const values = [
+        literal(request.requestId),
+        literal(request.requesterId),
+        literal(request.title),
+        literal(request.description),
+        optionalLiteral(request.summary),
+        literal(request.category),
+        literal(request.urgency),
+        jsonLiteral(request.location),
+        literal(request.status),
+        jsonLiteral(request.aiChecklist ?? null),
+        request.aiRiskScore !== undefined && request.aiRiskScore !== null ? request.aiRiskScore.toString() : "NULL",
+        isoLiteral(request.createdAt),
+        isoLiteral(request.updatedAt)
+      ];
+      return `(${values.join(", ")})`;
+    })
+    .join(",\n  ");
+  sections.push(`-- Help requests
+INSERT INTO "HelpRequest" (
+  "id",
+  "requesterId",
+  "title",
+  "description",
+  "summary",
+  "category",
+  "urgency",
+  "location",
+  "status",
+  "aiChecklist",
+  "aiRiskScore",
+  "createdAt",
+  "updatedAt"
+) VALUES
+  ${rows}
+ON CONFLICT ("id") DO UPDATE SET
+  "title" = EXCLUDED."title",
+  "description" = EXCLUDED."description",
+  "summary" = EXCLUDED."summary",
+  "category" = EXCLUDED."category",
+  "urgency" = EXCLUDED."urgency",
+  "location" = EXCLUDED."location",
+  "status" = EXCLUDED."status",
+  "aiChecklist" = EXCLUDED."aiChecklist",
+  "aiRiskScore" = EXCLUDED."aiRiskScore",
+  "updatedAt" = EXCLUDED."updatedAt";`);
+}
+
+if (sampleHelpOffers.length) {
+  const rows = sampleHelpOffers
+    .map((offer) => {
+      const values = [
+        literal(offer.offerId),
+        literal(offer.helperId),
+        literal(offer.requestId),
+        literal(offer.message),
+        literal(offer.status),
+        isoLiteral(offer.createdAt),
+        isoLiteral(offer.updatedAt)
+      ];
+      return `(${values.join(", ")})`;
+    })
+    .join(",\n  ");
+  sections.push(`-- Help offers
+INSERT INTO "HelpOffer" (
+  "id",
+  "helperId",
+  "requestId",
+  "message",
+  "status",
+  "createdAt",
+  "updatedAt"
+) VALUES
+  ${rows}
+ON CONFLICT ("id") DO UPDATE SET
+  "message" = EXCLUDED."message",
+  "status" = EXCLUDED."status",
+  "updatedAt" = EXCLUDED."updatedAt";`);
+}
+
+if (sampleHelpChats.length) {
+  const rows = sampleHelpChats
+    .map((chat) => {
+      const values = [
+        literal(chat.chatId),
+        literal(chat.requestId),
+        literal(chat.helperId),
+        literal(chat.requesterId),
+        literal(chat.consentLevel),
+        isoLiteral(chat.createdAt),
+        isoLiteral(chat.updatedAt)
+      ];
+      return `(${values.join(", ")})`;
+    })
+    .join(",\n  ");
+  sections.push(`-- Help chats
+INSERT INTO "Chat" (
+  "id",
+  "requestId",
+  "helperId",
+  "requesterId",
+  "consentLevel",
+  "createdAt",
+  "updatedAt"
+) VALUES
+  ${rows}
+ON CONFLICT ("id") DO UPDATE SET
+  "consentLevel" = EXCLUDED."consentLevel",
+  "updatedAt" = EXCLUDED."updatedAt";`);
+}
+
+if (sampleHelpMessages.length) {
+  const rows = sampleHelpMessages
+    .map((message) => {
+      const values = [
+        literal(message.messageId),
+        literal(message.chatId),
+        literal(message.authorId),
+        literal(message.content),
+        optionalLiteral(message.aiRewrite),
+        isoLiteral(message.createdAt)
+      ];
+      return `(${values.join(", ")})`;
+    })
+    .join(",\n  ");
+  sections.push(`-- Help messages
+INSERT INTO "Message" (
+  "id",
+  "chatId",
+  "authorId",
+  "content",
+  "aiRewrite",
+  "createdAt"
+) VALUES
+  ${rows}
+ON CONFLICT ("id") DO UPDATE SET
+  "content" = EXCLUDED."content",
+  "aiRewrite" = EXCLUDED."aiRewrite";`);
+}
+
+if (sampleHelpRatings.length) {
+  const rows = sampleHelpRatings
+    .map((rating) => {
+      const values = [
+        literal(rating.ratingId),
+        rating.score.toString(),
+        optionalLiteral(rating.feedback),
+        literal(rating.helperId),
+        literal(rating.requesterId),
+        literal(rating.requestId),
+        isoLiteral(rating.createdAt)
+      ];
+      return `(${values.join(", ")})`;
+    })
+    .join(",\n  ");
+  sections.push(`-- Help ratings
+INSERT INTO "Rating" (
+  "id",
+  "score",
+  "feedback",
+  "helperId",
+  "requesterId",
+  "requestId",
+  "createdAt"
+) VALUES
+  ${rows}
+ON CONFLICT ("id") DO UPDATE SET
+  "score" = EXCLUDED."score",
+  "feedback" = EXCLUDED."feedback",
+  "createdAt" = EXCLUDED."createdAt";`);
+}
+
+if (sampleHelpVerifications.length) {
+  const rows = sampleHelpVerifications
+    .map((record) => {
+      const values = [
+        literal(record.verificationId),
+        literal(record.userId),
+        literal(record.type),
+        literal(record.status),
+        jsonLiteral(record.metadata ?? null),
+        isoLiteral(record.createdAt),
+        isoLiteral(record.updatedAt)
+      ];
+      return `(${values.join(", ")})`;
+    })
+    .join(",\n  ");
+  sections.push(`-- Help verifications
+INSERT INTO "Verification" (
+  "id",
+  "userId",
+  "type",
+  "status",
+  "metadata",
+  "createdAt",
+  "updatedAt"
+) VALUES
+  ${rows}
+ON CONFLICT ("id") DO UPDATE SET
+  "status" = EXCLUDED."status",
+  "metadata" = EXCLUDED."metadata",
+  "updatedAt" = EXCLUDED."updatedAt";`);
+}
+
+if (sampleHelpModerationLogs.length) {
+  const rows = sampleHelpModerationLogs
+    .map((log) => {
+      const values = [
+        literal(log.moderationId),
+        literal(log.entityType),
+        literal(log.entityId),
+        literal(log.action),
+        optionalLiteral(log.notes),
+        isoLiteral(log.createdAt),
+        optionalLiteral(log.reviewedBy),
+        jsonLiteral(log.metadata ?? null)
+      ];
+      return `(${values.join(", ")})`;
+    })
+    .join(",\n  ");
+  sections.push(`-- Help moderation logs
+INSERT INTO "ModerationLog" (
+  "id",
+  "entityType",
+  "entityId",
+  "action",
+  "notes",
+  "createdAt",
+  "reviewedBy",
+  "metadata"
+) VALUES
+  ${rows}
+ON CONFLICT ("id") DO UPDATE SET
+  "action" = EXCLUDED."action",
+  "notes" = EXCLUDED."notes",
+  "reviewedBy" = EXCLUDED."reviewedBy",
+  "metadata" = EXCLUDED."metadata";`);
+}
+
+if (sampleProductivityBoards.length) {
+  const rows = sampleProductivityBoards
+    .map((board) => {
+      const values = [literal(board.boardId), literal(board.userId), literal(board.title), optionalLiteral(board.description), isoLiteral(board.createdAt)];
+      return `(${values.join(", ")})`;
+    })
+    .join(",\n  ");
+  sections.push(`-- Productivity boards
+INSERT INTO public.productivity_boards (
+  board_id,
+  user_id,
+  title,
+  description,
+  created_at
+) VALUES
+  ${rows}
+ON CONFLICT (board_id) DO UPDATE SET
+  title = EXCLUDED.title,
+  description = EXCLUDED.description,
+  created_at = EXCLUDED.created_at;`);
+}
+
+if (sampleProductivityColumns.length) {
+  const rows = sampleProductivityColumns
+    .map((column) => {
+      const values = [
+        literal(column.columnId),
+        literal(column.boardId),
+        literal(column.title),
+        column.position.toString(),
+        optionalLiteral(column.color),
+        isoLiteral(column.createdAt)
+      ];
+      return `(${values.join(", ")})`;
+    })
+    .join(",\n  ");
+  sections.push(`-- Productivity columns
+INSERT INTO public.productivity_columns (
+  column_id,
+  board_id,
+  title,
+  position,
+  color,
+  created_at
+) VALUES
+  ${rows}
+ON CONFLICT (column_id) DO UPDATE SET
+  title = EXCLUDED.title,
+  position = EXCLUDED.position,
+  color = EXCLUDED.color,
+  created_at = EXCLUDED.created_at;`);
+}
+
+if (sampleProductivityCards.length) {
+  const rows = sampleProductivityCards
+    .map((card) => {
+      const values = [
+        literal(card.cardId),
+        literal(card.columnId),
+        literal(card.title),
+        optionalLiteral(card.description),
+        arrayLiteral(card.labels),
+        card.dueDate ? isoLiteral(card.dueDate) : "NULL",
+        arrayLiteral(card.assignees, "uuid"),
+        jsonLiteral(card.metadata ?? null),
+        card.position.toString(),
+        isoLiteral(card.createdAt)
+      ];
+      return `(${values.join(", ")})`;
+    })
+    .join(",\n  ");
+  sections.push(`-- Productivity cards
+INSERT INTO public.productivity_cards (
+  card_id,
+  column_id,
+  title,
+  description,
+  labels,
+  due_date,
+  assignees,
+  metadata,
+  position,
+  created_at
+) VALUES
+  ${rows}
+ON CONFLICT (card_id) DO UPDATE SET
+  column_id = EXCLUDED.column_id,
+  title = EXCLUDED.title,
+  description = EXCLUDED.description,
+  labels = EXCLUDED.labels,
+  due_date = EXCLUDED.due_date,
+  assignees = EXCLUDED.assignees,
+  metadata = EXCLUDED.metadata,
+  position = EXCLUDED.position,
+  created_at = EXCLUDED.created_at;`);
+}
+
+if (sampleProductivityTodos.length) {
+  const rows = sampleProductivityTodos
+    .map((todo) => {
+      const values = [
+        literal(todo.todoId),
+        literal(todo.userId),
+        literal(todo.title),
+        booleanLiteral(todo.completed),
+        todo.dueDate ? isoLiteral(todo.dueDate) : "NULL",
+        arrayLiteral(todo.tags),
+        isoLiteral(todo.createdAt)
+      ];
+      return `(${values.join(", ")})`;
+    })
+    .join(",\n  ");
+  sections.push(`-- Productivity todos
+INSERT INTO public.productivity_todos (
+  todo_id,
+  user_id,
+  title,
+  completed,
+  due_date,
+  tags,
+  created_at
+) VALUES
+  ${rows}
+ON CONFLICT (todo_id) DO UPDATE SET
+  title = EXCLUDED.title,
+  completed = EXCLUDED.completed,
+  due_date = EXCLUDED.due_date,
+  tags = EXCLUDED.tags,
+  created_at = EXCLUDED.created_at;`);
+}
+
+if (sampleProductivityEvents.length) {
+  const rows = sampleProductivityEvents
+    .map((event) => {
+      const values = [
+        literal(event.eventId),
+        literal(event.userId),
+        literal(event.title),
+        optionalLiteral(event.description),
+        isoLiteral(event.startAt),
+        event.endAt ? isoLiteral(event.endAt) : "NULL",
+        optionalLiteral(event.location),
+        optionalLiteral(event.color),
+        jsonLiteral(event.metadata ?? null),
+        isoLiteral(event.createdAt)
+      ];
+      return `(${values.join(", ")})`;
+    })
+    .join(",\n  ");
+  sections.push(`-- Productivity events
+INSERT INTO public.productivity_events (
+  event_id,
+  user_id,
+  title,
+  description,
+  start_at,
+  end_at,
+  location,
+  color,
+  metadata,
+  created_at
+) VALUES
+  ${rows}
+ON CONFLICT (event_id) DO UPDATE SET
+  title = EXCLUDED.title,
+  description = EXCLUDED.description,
+  start_at = EXCLUDED.start_at,
+  end_at = EXCLUDED.end_at,
+  location = EXCLUDED.location,
+  color = EXCLUDED.color,
+  metadata = EXCLUDED.metadata,
   created_at = EXCLUDED.created_at;`);
 }
 

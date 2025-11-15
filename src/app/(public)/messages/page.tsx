@@ -106,6 +106,12 @@ const resolveAttachmentType = (file: File): ChatAttachment["type"] => {
   return "document";
 };
 
+const getInitials = (value: string) => {
+  const parts = value.trim().split(/\s+/).slice(0, 2);
+  if (!parts.length) return value.slice(0, 2).toUpperCase();
+  return parts.map((segment) => segment[0]?.toUpperCase() ?? "").join("") || value.slice(0, 2).toUpperCase();
+};
+
 const MessagesPageContent = () => {
   const { user, isAuthenticated } = useAuth();
   const { t } = useI18n();
@@ -1291,6 +1297,14 @@ function MessageThread({
 }: MessageThreadProps) {
   const { t } = useI18n();
   const totalReceivers = Math.max(participants.length - 1, 0);
+  const resolveProfile = useCallback(
+    (userId: string) => {
+      const fromDirectory = directory[userId];
+      if (fromDirectory) return fromDirectory;
+      return participants.find((participant) => participant.userId === userId) ?? null;
+    },
+    [directory, participants]
+  );
 
   return (
     <div className="flex-1 space-y-4 overflow-auto pr-2">
@@ -1300,6 +1314,28 @@ function MessageThread({
         const canEdit = isOwn && !message.deletedAt && Date.now() - message.createdAt < 15 * 60 * 1000;
         const readCount = message.readBy.filter((id) => id !== message.senderId).length;
         const fullyRead = totalReceivers > 0 && readCount >= totalReceivers;
+        const readerProfiles = message.readBy
+          .filter((id) => id !== message.senderId)
+          .map((id) => resolveProfile(id))
+          .filter(Boolean) as User[];
+        const avatarReaders = readerProfiles.slice(0, 3);
+        const labelReaderLimit = Math.min(readerProfiles.length, 2);
+        const labelReaders = readerProfiles.slice(0, labelReaderLimit);
+        const remainingReaders = Math.max(readerProfiles.length - labelReaderLimit, 0);
+        const labelNames = labelReaders
+          .map((profile) => profile.displayName ?? profile.email ?? profile.userId)
+          .join(", ");
+        const readLabel =
+          readerProfiles.length === 1
+            ? t("messages_read_by_single", {
+                name:
+                  labelReaders[0]?.displayName ?? labelReaders[0]?.email ?? labelReaders[0]?.userId ?? ""
+              })
+            : readerProfiles.length > 1
+              ? remainingReaders > 0
+                ? t("messages_read_by_multi_more", { names: labelNames, remaining: remainingReaders })
+                : t("messages_read_by_multi", { names: labelNames })
+              : null;
         const poll = message.metadata?.poll as {
           question?: string;
           options?: { id?: string; label: string; votes?: string[] }[];
@@ -1354,6 +1390,21 @@ function MessageThread({
                   </span>
                 )}
               </div>
+              {readerProfiles.length > 0 && readLabel && (
+                <div className={cn("flex items-center gap-2 text-[11px] text-muted-foreground", isOwn ? "justify-end" : "")}>
+                  <div className="flex -space-x-2">
+                    {avatarReaders.map((profile) => (
+                      <div
+                        key={`${message.messageId}_${profile.userId}`}
+                        className="h-5 w-5 rounded-full border border-background/60 bg-border/70 text-center text-[9px] font-semibold leading-5 text-white"
+                      >
+                        {getInitials(profile.displayName ?? profile.email ?? profile.userId)}
+                      </div>
+                    ))}
+                  </div>
+                  <span>{readLabel}</span>
+                </div>
+              )}
               {message.reactions.length > 0 && (
                 <div className={cn("flex flex-wrap gap-2", isOwn ? "justify-end" : "justify-start")}>
                   {Object.entries(

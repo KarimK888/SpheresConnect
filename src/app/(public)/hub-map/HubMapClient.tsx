@@ -27,6 +27,7 @@ type DecoratedCheckin = Checkin & {
 
 const FALLBACK_COORDS = { lat: 45.5017, lng: -73.5673 };
 const HUB_RADIUS_KM = 1.2;
+const HUB_PRESENCE_AVATAR_LIMIT = 4;
 
 const distanceKm = (a: { lat: number; lng: number }, b: { lat: number; lng: number }) => {
   const R = 6371;
@@ -39,6 +40,35 @@ const distanceKm = (a: { lat: number; lng: number }, b: { lat: number; lng: numb
     Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) * Math.sin(dLng / 2);
   const c = 2 * Math.atan2(Math.sqrt(h), Math.sqrt(1 - h));
   return R * c;
+};
+
+const getInitials = (value: string) => {
+  const parts = value.trim().split(/\s+/).slice(0, 2);
+  if (!parts.length) return value.slice(0, 2).toUpperCase();
+  return parts.map((segment) => segment[0]?.toUpperCase() ?? "").join("") || value.slice(0, 2).toUpperCase();
+};
+
+const PresenceAvatar = ({ profile, size = 28 }: { profile: User; size?: number }) => {
+  const initials = getInitials(profile.displayName ?? profile.email);
+  return (
+    <div
+      className="overflow-hidden rounded-full border border-border/60 bg-background/60 text-[0.55rem] font-semibold uppercase text-white"
+      style={{ width: size, height: size }}
+      title={profile.displayName ?? profile.email}
+    >
+      {profile.profilePictureUrl ? (
+        <img
+          src={profile.profilePictureUrl}
+          alt={profile.displayName ?? profile.email}
+          className="h-full w-full object-cover"
+          loading="lazy"
+          referrerPolicy="no-referrer"
+        />
+      ) : (
+        <span className="flex h-full w-full items-center justify-center">{initials}</span>
+      )}
+    </div>
+  );
 };
 
 export const HubMapClient = ({ hubs, initialCheckins, profiles }: HubMapClientProps) => {
@@ -88,6 +118,17 @@ export const HubMapClient = ({ hubs, initialCheckins, profiles }: HubMapClientPr
     });
     return decorated.sort((a, b) => b.createdAt - a.createdAt);
   }, [activeCheckins, profilesById, hubsById, viewerLocation]);
+
+  const presenceByHub = useMemo(() => {
+    const map = new Map<string, DecoratedCheckin[]>();
+    enrichedCheckins.forEach((entry) => {
+      if (!entry.hubId) return;
+      const bucket = map.get(entry.hubId) ?? [];
+      bucket.push(entry);
+      map.set(entry.hubId, bucket);
+    });
+    return map;
+  }, [enrichedCheckins]);
 
   const filteredCheckins = useMemo(() => {
     if (focusMode === "nearby" && viewerLocation) {
@@ -260,14 +301,39 @@ export const HubMapClient = ({ hubs, initialCheckins, profiles }: HubMapClientPr
             <CardContent className="space-y-2 p-5">
               <h2 className="text-sm font-semibold text-white">{t("hub_active_hubs_title")}</h2>
               <ul className="space-y-2 text-sm text-muted-foreground">
-                {hubs.map((hub) => (
-                  <li key={hub.hubId} className="flex items-center justify-between rounded-lg bg-background/40 px-3 py-2">
-                    <span>{hub.name}</span>
-                    <span className="text-xs text-muted-foreground">
-                      {hub.activeUsers.length} {t("hub_active_hubs_count")}
-                    </span>
-                  </li>
-                ))}
+                {hubs.map((hub) => {
+                  const livePresence = presenceByHub.get(hub.hubId) ?? [];
+                  const label = livePresence.length
+                    ? t("hub_presence_live_label", { count: livePresence.length })
+                    : t("hub_active_hubs_count", { count: hub.activeUsers.length });
+                  return (
+                    <li
+                      key={hub.hubId}
+                      className="flex flex-col gap-2 rounded-lg border border-border/30 bg-background/40 px-3 py-2"
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className="text-white">{hub.name}</span>
+                        <span className="text-[11px] uppercase tracking-[0.25em] text-muted-foreground">{label}</span>
+                      </div>
+                      {livePresence.length ? (
+                        <div className="flex items-center gap-2">
+                          <div className="flex -space-x-2">
+                            {livePresence.slice(0, HUB_PRESENCE_AVATAR_LIMIT).map((entry) => (
+                              <PresenceAvatar key={entry.checkinId} profile={entry.profile} size={28} />
+                            ))}
+                          </div>
+                          {livePresence.length > HUB_PRESENCE_AVATAR_LIMIT && (
+                            <span className="text-xs text-muted-foreground">
+                              +{livePresence.length - HUB_PRESENCE_AVATAR_LIMIT}
+                            </span>
+                          )}
+                        </div>
+                      ) : (
+                        <span className="text-xs text-muted-foreground">{t("hub_presence_empty")}</span>
+                      )}
+                    </li>
+                  );
+                })}
               </ul>
             </CardContent>
           </Card>

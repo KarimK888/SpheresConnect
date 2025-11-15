@@ -1,12 +1,57 @@
 import { NextResponse } from "next/server";
 import { randomUUID } from "crypto";
 import { getBackend } from "@/lib/backend";
+import type { Checkin } from "@/lib/types";
 import { EventSchema, EventUpdateSchema, RSVPEventSchema } from "@/lib/validation";
 
 export async function GET() {
   const backend = getBackend();
-  const events = await backend.events.list();
-  return NextResponse.json({ items: events });
+  const [events, hubs, checkins] = await Promise.all([
+    backend.events.list(),
+    backend.hubs.list(),
+    backend.checkins
+      .listActive()
+      .then((items) => items)
+      .catch(() => [])
+  ]);
+
+  const hubDirectory = Object.fromEntries(hubs.map((hub) => [hub.hubId, hub]));
+  const presenceByHub = checkins.reduce<Record<string, Checkin[]>>((acc, entry) => {
+    if (!entry.hubId) {
+      return acc;
+    }
+    if (!acc[entry.hubId]) {
+      acc[entry.hubId] = [];
+    }
+    acc[entry.hubId].push(entry);
+    return acc;
+  }, {});
+
+  const uniqueUserIds = new Set<string>();
+  events.forEach((event) => {
+    uniqueUserIds.add(event.hostUserId);
+    event.attendees.forEach((attendee) => uniqueUserIds.add(attendee));
+  });
+  hubs.forEach((hub) => hub.activeUsers.forEach((userId) => uniqueUserIds.add(userId)));
+  checkins.forEach((entry) => uniqueUserIds.add(entry.userId));
+
+  const directoryEntries = await Promise.all(
+    Array.from(uniqueUserIds).map(async (userId) => {
+      const profile = await backend.users.get(userId);
+      return profile ? [userId, profile] : null;
+    })
+  );
+
+  const directory = Object.fromEntries(
+    directoryEntries.filter(Boolean) as [string, Awaited<ReturnType<typeof backend.users.get>>][]
+  );
+
+  return NextResponse.json({
+    items: events,
+    directory,
+    hubs: hubDirectory,
+    presence: presenceByHub
+  });
 }
 
 export async function POST(request: Request) {

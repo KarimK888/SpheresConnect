@@ -362,6 +362,7 @@ export type Database = {
           status: "pending" | "paid" | "failed" | "refunded";
           stripe_payment_intent_id: string | null;
           created_at: string;
+          metadata: Record<string, unknown> | null;
         };
         Insert: {
           order_id: string;
@@ -373,11 +374,13 @@ export type Database = {
           status: "pending" | "paid" | "failed" | "refunded";
           stripe_payment_intent_id?: string | null;
           created_at?: string;
+          metadata?: Record<string, unknown> | null;
         };
         Update: {
           status?: "pending" | "paid" | "failed" | "refunded";
           stripe_payment_intent_id?: string | null;
           created_at?: string;
+          metadata?: Record<string, unknown> | null;
         };
       };
       order_milestones: {
@@ -518,6 +521,464 @@ export type Database = {
           metadata?: Record<string, unknown> | null;
           created_at?: string;
           read_at?: string | null;
+        };
+      };
+      productivity_boards: {
+        Row: {
+          board_id: string;
+          user_id: string;
+          title: string;
+          description: string | null;
+          created_at: string;
+        };
+        Insert: {
+          board_id?: string;
+          user_id: string;
+          title: string;
+          description?: string | null;
+          created_at?: string;
+        };
+        Update: {
+          user_id?: string;
+          title?: string;
+          description?: string | null;
+          created_at?: string;
+        };
+      };
+      productivity_columns: {
+        Row: {
+          column_id: string;
+          board_id: string;
+          title: string;
+          position: number;
+          color: string | null;
+          created_at: string;
+        };
+        Insert: {
+          column_id?: string;
+          board_id: string;
+          title: string;
+          position?: number;
+          color?: string | null;
+          created_at?: string;
+        };
+        Update: {
+          board_id?: string;
+          title?: string;
+          position?: number;
+          color?: string | null;
+          created_at?: string;
+        };
+      };
+      productivity_cards: {
+        Row: {
+          card_id: string;
+          column_id: string;
+          title: string;
+          description: string | null;
+          labels: string[] | null;
+          due_date: string | null;
+          assignees: string[] | null;
+          metadata: Record<string, unknown> | null;
+          position: number;
+          priority: string;
+          created_at: string;
+        };
+        Insert: {
+          card_id?: string;
+          column_id: string;
+          title: string;
+          description?: string | null;
+          labels?: string[] | null;
+          due_date?: string | null;
+          assignees?: string[] | null;
+          metadata?: Record<string, unknown> | null;
+          position?: number;
+          priority?: string;
+          created_at?: string;
+        };
+        Update: {
+          column_id?: string;
+          title?: string;
+          description?: string | null;
+          labels?: string[] | null;
+          due_date?: string | null;
+          assignees?: string[] | null;
+          metadata?: Record<string, unknown> | null;
+          position?: number;
+          priority?: string;
+          created_at?: string;
+        };
+      };
+      productivity_todos: {
+        Row: {
+          todo_id: string;
+          user_id: string;
+          title: string;
+          completed: boolean;
+          due_date: string | null;
+          tags: string[] | null;
+          priority: string;
+          created_at: string;
+        };
+        Insert: {
+          todo_id?: string;
+          user_id: string;
+          title: string;
+          completed?: boolean;
+          due_date?: string | null;
+          tags?: string[] | null;
+          priority?: string;
+          created_at?: string;
+        };
+        Update: {
+          user_id?: string;
+          title?: string;
+          completed?: boolean;
+          due_date?: string | null;
+          tags?: string[] | null;
+          priority?: string;
+          created_at?: string;
+        };
+      };
+      productivity_events: {
+        Row: {
+          event_id: string;
+          user_id: string;
+          title: string;
+          description: string | null;
+          start_at: string;
+          end_at: string | null;
+          location: string | null;
+          color: string | null;
+          metadata: Record<string, unknown> | null;
+          created_at: string;
+        };
+        Insert: {
+          event_id?: string;
+          user_id: string;
+          title: string;
+          description?: string | null;
+          start_at: string;
+          end_at?: string | null;
+          location?: string | null;
+          color?: string | null;
+          metadata?: Record<string, unknown> | null;
+          created_at?: string;
+        };
+        Update: {
+          user_id?: string;
+          title?: string;
+          description?: string | null;
+          start_at?: string;
+          end_at?: string | null;
+          location?: string | null;
+          color?: string | null;
+          metadata?: Record<string, unknown> | null;
+          created_at?: string;
+        };
+      };
+      productivity_comments: {
+        Row: {
+          comment_id: string;
+          entity_type: string;
+          entity_id: string;
+          user_id: string;
+          author_name: string | null;
+          body: string;
+          created_at: string;
+        };
+        Insert: {
+          comment_id?: string;
+          entity_type: string;
+          entity_id: string;
+          user_id: string;
+          author_name?: string | null;
+          body: string;
+          created_at?: string;
+        };
+        Update: {
+          entity_type?: string;
+          entity_id?: string;
+          user_id?: string;
+          author_name?: string | null;
+          body?: string;
+          created_at?: string;
+        };
+      };
+      "Chat": {
+        Row: {
+          id: string;
+          requestId: string;
+          helperId: string;
+          requesterId: string;
+          consentLevel: string;
+          createdAt: string;
+          updatedAt: string;
+        };
+        Insert: {
+          id?: string;
+          requestId: string;
+          helperId: string;
+          requesterId: string;
+          consentLevel?: string;
+          createdAt?: string;
+          updatedAt?: string;
+        };
+        Update: {
+          requestId?: string;
+          helperId?: string;
+          requesterId?: string;
+          consentLevel?: string;
+          createdAt?: string;
+          updatedAt?: string;
+        };
+      };
+      HelpOffer: {
+        Row: {
+          id: string;
+          helperId: string;
+          requestId: string;
+          message: string;
+          status: string;
+          createdAt: string;
+          updatedAt: string;
+        };
+        Insert: {
+          id?: string;
+          helperId: string;
+          requestId: string;
+          message: string;
+          status?: string;
+          createdAt?: string;
+          updatedAt?: string;
+        };
+        Update: {
+          helperId?: string;
+          requestId?: string;
+          message?: string;
+          status?: string;
+          createdAt?: string;
+          updatedAt?: string;
+        };
+      };
+      HelpRequest: {
+        Row: {
+          id: string;
+          requesterId: string;
+          title: string;
+          description: string;
+          summary: string | null;
+          category: string;
+          urgency: string;
+          location: Record<string, unknown> | null;
+          status: string;
+          aiChecklist: Record<string, unknown> | null;
+          aiRiskScore: number | null;
+          createdAt: string;
+          updatedAt: string;
+        };
+        Insert: {
+          id?: string;
+          requesterId: string;
+          title: string;
+          description: string;
+          summary?: string | null;
+          category: string;
+          urgency: string;
+          location?: Record<string, unknown> | null;
+          status?: string;
+          aiChecklist?: Record<string, unknown> | null;
+          aiRiskScore?: number | null;
+          createdAt?: string;
+          updatedAt?: string;
+        };
+        Update: {
+          requesterId?: string;
+          title?: string;
+          description?: string;
+          summary?: string | null;
+          category?: string;
+          urgency?: string;
+          location?: Record<string, unknown> | null;
+          status?: string;
+          aiChecklist?: Record<string, unknown> | null;
+          aiRiskScore?: number | null;
+          createdAt?: string;
+          updatedAt?: string;
+        };
+      };
+      Message: {
+        Row: {
+          id: string;
+          chatId: string;
+          authorId: string;
+          content: string;
+          aiRewrite: string | null;
+          createdAt: string;
+        };
+        Insert: {
+          id?: string;
+          chatId: string;
+          authorId: string;
+          content: string;
+          aiRewrite?: string | null;
+          createdAt?: string;
+        };
+        Update: {
+          chatId?: string;
+          authorId?: string;
+          content?: string;
+          aiRewrite?: string | null;
+          createdAt?: string;
+        };
+      };
+      ModerationLog: {
+        Row: {
+          id: string;
+          entityType: string;
+          entityId: string;
+          action: string;
+          notes: string | null;
+          createdAt: string;
+          reviewedBy: string | null;
+          metadata: Record<string, unknown> | null;
+        };
+        Insert: {
+          id?: string;
+          entityType: string;
+          entityId: string;
+          action: string;
+          notes?: string | null;
+          createdAt?: string;
+          reviewedBy?: string | null;
+          metadata?: Record<string, unknown> | null;
+        };
+        Update: {
+          entityType?: string;
+          entityId?: string;
+          action?: string;
+          notes?: string | null;
+          createdAt?: string;
+          reviewedBy?: string | null;
+          metadata?: Record<string, unknown> | null;
+        };
+      };
+      Rating: {
+        Row: {
+          id: string;
+          score: number;
+          feedback: string | null;
+          helperId: string;
+          requesterId: string;
+          requestId: string;
+          createdAt: string;
+        };
+        Insert: {
+          id?: string;
+          score: number;
+          feedback?: string | null;
+          helperId: string;
+          requesterId: string;
+          requestId: string;
+          createdAt?: string;
+        };
+        Update: {
+          score?: number;
+          feedback?: string | null;
+          helperId?: string;
+          requesterId?: string;
+          requestId?: string;
+          createdAt?: string;
+        };
+      };
+      "User": {
+        Row: {
+          id: string;
+          email: string;
+          fullName: string | null;
+          avatarUrl: string | null;
+          phoneVerified: boolean;
+          idVerified: boolean;
+          trustLevel: string;
+          createdAt: string;
+          updatedAt: string;
+          about: string | null;
+          aboutGenerated: string | null;
+          location: string | null;
+          phone: string | null;
+          preferredCategories: string[] | null;
+          profileTags: string[] | null;
+          pronouns: string | null;
+          publicProfile: boolean;
+          radiusPreference: number;
+        };
+        Insert: {
+          id?: string;
+          email: string;
+          fullName?: string | null;
+          avatarUrl?: string | null;
+          phoneVerified?: boolean;
+          idVerified?: boolean;
+          trustLevel?: string;
+          createdAt?: string;
+          updatedAt?: string;
+          about?: string | null;
+          aboutGenerated?: string | null;
+          location?: string | null;
+          phone?: string | null;
+          preferredCategories?: string[] | null;
+          profileTags?: string[] | null;
+          pronouns?: string | null;
+          publicProfile?: boolean;
+          radiusPreference?: number;
+        };
+        Update: {
+          email?: string;
+          fullName?: string | null;
+          avatarUrl?: string | null;
+          phoneVerified?: boolean;
+          idVerified?: boolean;
+          trustLevel?: string;
+          createdAt?: string;
+          updatedAt?: string;
+          about?: string | null;
+          aboutGenerated?: string | null;
+          location?: string | null;
+          phone?: string | null;
+          preferredCategories?: string[] | null;
+          profileTags?: string[] | null;
+          pronouns?: string | null;
+          publicProfile?: boolean;
+          radiusPreference?: number;
+        };
+      };
+      Verification: {
+        Row: {
+          id: string;
+          userId: string;
+          type: string;
+          status: string;
+          metadata: Record<string, unknown> | null;
+          createdAt: string;
+          updatedAt: string;
+        };
+        Insert: {
+          id?: string;
+          userId: string;
+          type: string;
+          status?: string;
+          metadata?: Record<string, unknown> | null;
+          createdAt?: string;
+          updatedAt?: string;
+        };
+        Update: {
+          userId?: string;
+          type?: string;
+          status?: string;
+          metadata?: Record<string, unknown> | null;
+          createdAt?: string;
+          updatedAt?: string;
         };
       };
       verification_requests: {

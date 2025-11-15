@@ -5,13 +5,15 @@ import { useRouter } from "next/navigation";
 import { GateMessage } from "@/components/gates/GateMessage";
 import { useSessionState } from "@/context/session";
 import { useI18n } from "@/context/i18n";
-import { getBackend } from "@/lib/backend";
-import type { Event } from "@/lib/types";
+import type { Checkin, Event, Hub, User } from "@/lib/types";
 import { EventsClient } from "./EventsClient";
 
 type EventsPayload = {
   upcoming: Event[];
   past: Event[];
+  directory: Record<string, User>;
+  hubs: Record<string, Hub>;
+  presence: Record<string, Checkin[]>;
 };
 
 export const EventsGate = () => {
@@ -34,17 +36,25 @@ export const EventsGate = () => {
     }
 
     let cancelled = false;
-    const backend = getBackend();
-
     const load = async () => {
       setLoading(true);
       try {
-        const events = await backend.events.list();
+        const response = await fetch("/api/events", { cache: "no-store" });
+        if (!response.ok) {
+          throw new Error("failed");
+        }
+        const { items, directory, hubs, presence } = (await response.json()) as {
+          items: Event[];
+          directory: Record<string, User>;
+          hubs: Record<string, Hub>;
+          presence: Record<string, Checkin[]>;
+        };
+        const events = items;
         const now = Date.now();
         const upcoming = events.filter((event) => event.startsAt >= now);
         const past = events.filter((event) => event.startsAt < now);
         if (!cancelled) {
-          setPayload({ upcoming, past });
+          setPayload({ upcoming, past, directory, hubs, presence });
           setError(null);
         }
       } catch (err) {
@@ -97,7 +107,13 @@ export const EventsGate = () => {
 
   return (
     <div className="mx-auto w-full max-w-5xl px-6 py-10">
-      <EventsClient upcoming={payload.upcoming} past={payload.past} />
+      <EventsClient
+        upcoming={payload.upcoming}
+        past={payload.past}
+        directory={payload.directory}
+        hubs={payload.hubs}
+        presence={payload.presence}
+      />
     </div>
   );
 };

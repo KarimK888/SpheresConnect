@@ -71,7 +71,22 @@ export const ChatSchema = z.object({
 });
 
 export const OrderSchema = z.object({
-  artworkId: z.string()
+  artworkId: z.string(),
+  buyerId: z.string().optional(),
+  buyerName: z.string().min(2).max(120).optional(),
+  buyerEmail: z.string().email().optional(),
+  buyerPhone: z.string().min(6).max(30).optional(),
+  notes: z.string().max(2000).optional(),
+  shippingAddress: z
+    .object({
+      line1: z.string().min(3),
+      line2: z.string().optional(),
+      city: z.string().optional(),
+      region: z.string().optional(),
+      country: z.string().optional(),
+      postalCode: z.string().optional()
+    })
+    .optional()
 });
 
 export const EventSchema = z.object({

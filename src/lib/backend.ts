@@ -6,6 +6,14 @@ import type {
   ChatMessage,
   Checkin,
   Event,
+  HelpChat,
+  HelpMessage,
+  HelpModerationLog,
+  HelpOffer,
+  HelpRating,
+  HelpRequest,
+  HelpUser,
+  HelpVerificationRecord,
   Hub,
   MatchAction,
   MatchActionResult,
@@ -23,7 +31,13 @@ import type {
   VerificationRequest,
   ModerationQueueItem,
   SupportTicket,
-  User
+  User,
+  ProductivityBoard,
+  ProductivityColumn,
+  ProductivityCard,
+  ProductivityTodo,
+  ProductivityCalendarEvent,
+  ProductivityComment
 } from "./types";
 
 export interface AuthSession {
@@ -109,8 +123,10 @@ export interface BackendMarketplace {
 }
 
 export interface BackendOrders {
-  createPaymentIntent: (input: { artworkId: string; buyerId: string }) => Promise<{ clientSecret: string; order: Order }>;
+  createPaymentIntent: (input: { artworkId: string; buyerId: string; metadata?: Record<string, unknown> }) => Promise<{ clientSecret: string; order: Order }>;
   confirmPayment: (input: { paymentIntentId: string; status: Order["status"] }) => Promise<Order>;
+  get: (orderId: string) => Promise<Order | null>;
+  listForUser: (input: { userId: string; role?: "buyer" | "seller" | "all" }) => Promise<Order[]>;
 }
 
 export type CreateEventInput = {
@@ -174,7 +190,11 @@ export interface BackendOrderMilestones {
 
 export interface BackendNotifications {
   list: (input: { userId: string; since?: number; limit?: number }) => Promise<NotificationEntry[]>;
-  create: (entry: Omit<NotificationEntry, "notificationId" | "createdAt" | "readAt"> & { notificationId?: string; createdAt?: number }) => Promise<NotificationEntry>;
+  create: (entry: Omit<NotificationEntry, "notificationId" | "createdAt" | "readAt"> & {
+    notificationId?: string;
+    createdAt?: number;
+    readAt?: number | null;
+  }) => Promise<NotificationEntry>;
   markRead: (input: { userId: string; ids?: string[]; read: boolean }) => Promise<void>;
 }
 
@@ -194,6 +214,101 @@ export interface BackendAdminQueues {
     list: (input?: { status?: SupportTicket["status"] }) => Promise<SupportTicket[]>;
     update: (ticketId: string, data: Partial<Omit<SupportTicket, "ticketId" | "userId" | "createdAt">>) => Promise<SupportTicket>;
   };
+}
+
+export interface BackendHelpCenter {
+  users: {
+    list: () => Promise<HelpUser[]>;
+    upsert: (input: Partial<HelpUser> & { id: string }) => Promise<HelpUser>;
+  };
+  requests: {
+    list: (input?: { status?: HelpRequest["status"]; limit?: number }) => Promise<HelpRequest[]>;
+    create: (
+      input: Omit<HelpRequest, "requestId" | "createdAt" | "updatedAt" | "status"> & {
+        requestId?: string;
+        status?: HelpRequest["status"];
+      }
+    ) => Promise<HelpRequest>;
+    update: (
+      requestId: string,
+      data: Partial<Omit<HelpRequest, "requestId" | "createdAt" | "updatedAt">> & { status?: HelpRequest["status"] }
+    ) => Promise<HelpRequest>;
+  };
+  offers: {
+    listForRequest: (requestId: string) => Promise<HelpOffer[]>;
+    create: (
+      input: Omit<HelpOffer, "offerId" | "createdAt" | "updatedAt" | "status"> & { offerId?: string; status?: HelpOffer["status"] }
+    ) => Promise<HelpOffer>;
+    updateStatus: (offerId: string, status: HelpOffer["status"]) => Promise<HelpOffer>;
+  };
+  chats: {
+    listForRequest: (requestId: string) => Promise<HelpChat[]>;
+    start: (input: Omit<HelpChat, "chatId" | "createdAt" | "updatedAt"> & { chatId?: string }) => Promise<HelpChat>;
+  };
+  messages: {
+    list: (chatId: string) => Promise<HelpMessage[]>;
+    send: (input: Omit<HelpMessage, "messageId" | "createdAt"> & { messageId?: string }) => Promise<HelpMessage>;
+  };
+  ratings: {
+    listForUser: (input: { helperId?: string; requesterId?: string }) => Promise<HelpRating[]>;
+    submit: (input: Omit<HelpRating, "ratingId" | "createdAt"> & { ratingId?: string }) => Promise<HelpRating>;
+  };
+  verification: {
+    list: (input?: { status?: HelpVerificationRecord["status"] }) => Promise<HelpVerificationRecord[]>;
+    submit: (
+      input: Omit<HelpVerificationRecord, "verificationId" | "status" | "createdAt" | "updatedAt"> & {
+        verificationId?: string;
+        status?: HelpVerificationRecord["status"];
+      }
+    ) => Promise<HelpVerificationRecord>;
+    updateStatus: (verificationId: string, status: HelpVerificationRecord["status"]) => Promise<HelpVerificationRecord>;
+  };
+  moderation: {
+    list: (input?: { entityType?: string }) => Promise<HelpModerationLog[]>;
+    log: (input: Omit<HelpModerationLog, "moderationId" | "createdAt"> & { moderationId?: string }) => Promise<HelpModerationLog>;
+  };
+}
+
+export interface ProductivitySnapshot {
+  boards: ProductivityBoard[];
+  columns: ProductivityColumn[];
+  cards: ProductivityCard[];
+  todos: ProductivityTodo[];
+  events: ProductivityCalendarEvent[];
+  comments: ProductivityComment[];
+}
+
+export interface BackendProductivity {
+  fetch: (userId: string) => Promise<ProductivitySnapshot>;
+  createCard: (
+    input: Omit<ProductivityCard, "cardId" | "createdAt" | "position"> & { columnId: string; userId: string; position?: number }
+  ) => Promise<ProductivityCard>;
+  moveCard: (input: { cardId: string; columnId: string; position: number }) => Promise<ProductivityCard>;
+  updateCard: (
+    cardId: string,
+    data: Partial<Omit<ProductivityCard, "cardId" | "columnId" | "createdAt" | "position">> & { columnId?: string; position?: number }
+  ) => Promise<ProductivityCard>;
+  createTodo: (
+    input: Omit<ProductivityTodo, "todoId" | "createdAt" | "completed"> & { completed?: boolean }
+  ) => Promise<ProductivityTodo>;
+  updateTodo: (
+    todoId: string,
+    data: Partial<Omit<ProductivityTodo, "todoId" | "userId" | "createdAt">>
+  ) => Promise<ProductivityTodo>;
+  toggleTodo: (todoId: string, completed: boolean) => Promise<ProductivityTodo>;
+  deleteTodo: (todoId: string) => Promise<void>;
+  createEvent: (
+    input: Omit<ProductivityCalendarEvent, "eventId" | "createdAt"> & { eventId?: string }
+  ) => Promise<ProductivityCalendarEvent>;
+  updateEvent: (
+    eventId: string,
+    data: Partial<Omit<ProductivityCalendarEvent, "eventId" | "userId" | "createdAt">>
+  ) => Promise<ProductivityCalendarEvent>;
+  deleteEvent: (eventId: string) => Promise<void>;
+  listComments: (input: { entityType: "card" | "todo"; entityId: string }) => Promise<ProductivityComment[]>;
+  addComment: (
+    input: Omit<ProductivityComment, "commentId" | "createdAt"> & { commentId?: string }
+  ) => Promise<ProductivityComment>;
 }
 
 export type SignedUploadTarget = {
@@ -225,6 +340,8 @@ export interface BackendAdapter {
   orderMilestones: BackendOrderMilestones;
   notifications: BackendNotifications;
   adminQueues: BackendAdminQueues;
+  productivity: BackendProductivity;
+  helpCenter: BackendHelpCenter;
   provider: "firebase" | "supabase";
 }
 
