@@ -1,280 +1,298 @@
 "use client";
 
-import Image from "next/image";
-import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import { motion, useAnimation, useMotionValue, useTransform } from "framer-motion";
-import { Heart, RefreshCcw, Sparkles, X } from "lucide-react";
-import { Badge } from "@/components/ui/badge";
+import Link from "next/link";
+import { ArrowRight, Heart, MapPin, MessageCircle, Sparkles, Star, Users, Zap } from "lucide-react";
+import { useSessionState } from "@/context/session";
 import { Button } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
-import { useAuth } from "@/hooks/useAuth";
-import { useMatch } from "@/hooks/useMatch";
-import { useI18n } from "@/context/i18n";
-import type { MatchSuggestion } from "@/lib/types";
+import { Badge } from "@/components/ui/badge";
+import { Card, CardContent } from "@/components/ui/card";
+import { cn } from "@/lib/utils";
 
-const DECISION_DISTANCE = 160;
-const DECISION_VELOCITY = 800;
+const candidateStories = [
+  {
+    name: "Jamie Rivera",
+    role: "Experiential designer",
+    hub: "Brooklyn Wave",
+    skills: ["Spatial", "Motion", "XR"],
+    vibe: "creative",
+    quote: "Needed a 3D-first stylist in 24h and matched on the first swipe."
+  },
+  {
+    name: "Marlow Ahn",
+    role: "Sound scenographer",
+    hub: "Seoul Heights",
+    skills: ["Modular", "Field", "Mix"],
+    vibe: "technical",
+    quote: "Genkit prompts gave me collaborators that actually get hybrid sets."
+  },
+  {
+    name: "Isha Patel",
+    role: "Creator partnerships",
+    hub: "Lisbon Atlantic",
+    skills: ["Curation", "BD", "Ops"],
+    vibe: "ops",
+    quote: "Routed investor intros straight from the matcher page as proof of fit."
+  }
+];
 
-const getInitials = (name: string) => name.trim().slice(0, 2).toUpperCase();
+const vibeFilters = [
+  { id: "creative", label: "Creative" },
+  { id: "technical", label: "Technical" },
+  { id: "ops", label: "Ops" }
+] as const;
 
-const AvatarCircle = ({ candidate, size = 64 }: { candidate: MatchSuggestion; size?: number }) => (
-  <div
-    className="flex items-center justify-center overflow-hidden rounded-full border border-border bg-background/70"
-    style={{ width: size, height: size }}
-  >
-    {candidate.profilePictureUrl ? (
-      <Image
-        src={candidate.profilePictureUrl}
-        alt={candidate.displayName}
-        width={size ?? 64}
-        height={size ?? 64}
-        className="h-full w-full object-cover"
-        unoptimized
-      />
-    ) : (
-      <span className="text-lg font-semibold uppercase">{getInitials(candidate.displayName)}</span>
-    )}
-  </div>
-);
+const benefits = [
+  {
+    icon: Users,
+    title: "Taste-based cohorts",
+    copy: "Stack members by skills, vibes, or hubs before they ever log in."
+  },
+  {
+    icon: MessageCircle,
+    title: "Warm intros",
+    copy: "Auto-suggest DM scripts personalized with context from both sides."
+  },
+  {
+    icon: Zap,
+    title: "Instant refresh",
+    copy: "Swipe deck rebuilds nightly based on attendance, sentiment, and pipeline."
+  }
+];
 
-export default function MatcherPage() {
-  const { t } = useI18n();
-  const { user, isAuthenticated } = useAuth();
-  const { matches, loading, error, refresh, onConnect, onSkip } = useMatch(user?.userId);
-  const [queue, setQueue] = useState<MatchSuggestion[]>([]);
-  const [isAnimating, setIsAnimating] = useState(false);
+const proofPoints = [
+  { label: "Match rate", value: "87%", detail: "within 3 swipes" },
+  { label: "Avg. DM reply", value: "12m", detail: "after connection" },
+  { label: "Cross-hub bridges", value: "421", detail: "last quarter" }
+];
 
-  const controls = useAnimation();
-  const x = useMotionValue(0);
-  const rotate = useTransform(x, [-320, 0, 320], [-18, 0, 18]);
+export default function MatcherLandingPage() {
+  const sessionUser = useSessionState((state) => state.user);
+  const [activeFilter, setActiveFilter] = useState<(typeof vibeFilters)[number]["id"]>("creative");
+  const [activeIndex, setActiveIndex] = useState(0);
 
-  useEffect(() => {
-    setQueue(matches);
-  }, [matches]);
-
-  const topCandidate = queue[0];
-  const nextCandidate = queue[1];
-
-  useEffect(() => {
-    controls.set({ x: 0, rotate: 0, opacity: 1 });
-    x.set(0);
-  }, [controls, x, topCandidate?.userId]);
-
-  const sharedSkills = useMemo(() => {
-    if (!user || !topCandidate) return [];
-    return topCandidate.skills.filter((skill) => user.skills.includes(skill));
-  }, [user, topCandidate]);
-
-  const handleDecision = async (direction: "connect" | "skip") => {
-    if (!topCandidate || isAnimating) return;
-    setIsAnimating(true);
-    const candidateId = topCandidate.userId;
-    const targetX = direction === "connect" ? 520 : -520;
-    const targetRotate = direction === "connect" ? 22 : -22;
-
-    await controls.start({ x: targetX, rotate: targetRotate, opacity: 0 });
-
-    if (direction === "connect") {
-      onConnect(candidateId);
-    } else {
-      onSkip(candidateId);
-    }
-
-    const nextLength = queue.length - 1;
-    setQueue((prev) => prev.filter((candidate) => candidate.userId !== candidateId));
-    controls.set({ x: 0, rotate: 0, opacity: 1 });
-    x.set(0);
-    setIsAnimating(false);
-
-    if (nextLength <= 2) {
-      void refresh();
-    }
-  };
-
-  const handleDragEnd = async (_event: MouseEvent | TouchEvent | PointerEvent, info: { offset: { x: number }; velocity: { x: number } }) => {
-    const { offset, velocity } = info;
-    if (offset.x > DECISION_DISTANCE || velocity.x > DECISION_VELOCITY) {
-      await handleDecision("connect");
-    } else if (offset.x < -DECISION_DISTANCE || velocity.x < -DECISION_VELOCITY) {
-      await handleDecision("skip");
-    } else {
-      await controls.start({ x: 0, rotate: 0, opacity: 1 });
-    }
-  };
-
-  const renderCandidateBadges = (candidate: MatchSuggestion) => (
-    <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-      {candidate.sharedHub && <Badge variant="accent">{t("matcher_same_hub_badge")}</Badge>}
-      {!candidate.sharedHub && candidate.hubName && (
-        <Badge variant="outline">{t("matcher_other_hub_badge", { hub: candidate.hubName })}</Badge>
-      )}
-      {typeof candidate.distanceKm === "number" && (
-        <span>{t("matcher_distance_label", { distance: Math.round(candidate.distanceKm) })}</span>
-      )}
-    </div>
+  const filteredDeck = useMemo(
+    () => candidateStories.filter((story) => story.vibe === activeFilter),
+    [activeFilter]
   );
 
-  const renderPreviewCard = (candidate: MatchSuggestion) => (
-    <Card className="pointer-events-none mt-6 w-full max-w-md scale-95 bg-card/70 shadow-lg backdrop-blur">
-      <div className="space-y-3 p-6">
-        <div className="flex items-start justify-between gap-3">
-          <div className="flex items-center gap-3">
-            <AvatarCircle candidate={candidate} size={56} />
-            <p className="text-lg font-semibold text-white">{candidate.displayName}</p>
-          </div>
-          {renderCandidateBadges(candidate)}
-        </div>
-        {candidate.bio && <p className="text-sm text-muted-foreground">{candidate.bio}</p>}
-        {candidate.skills.length > 0 && (
-          <div className="flex flex-wrap gap-2">
-            {candidate.skills.slice(0, 4).map((skill) => (
-              <Badge key={skill} variant="outline">
-                {skill}
-              </Badge>
-            ))}
-          </div>
-        )}
-      </div>
-    </Card>
-  );
+  const primaryCtaHref = sessionUser ? "/matcher/workspace" : "/signup";
+  const primaryCtaLabel = sessionUser ? "Start matching" : "Join matcher";
+
+  useEffect(() => {
+    if (!filteredDeck.length) return;
+    const timer = window.setInterval(() => {
+      setActiveIndex((prev) => (prev + 1) % filteredDeck.length);
+    }, 4200);
+    return () => window.clearInterval(timer);
+  }, [filteredDeck.length]);
+
+  const activeStory = filteredDeck[activeIndex] ?? filteredDeck[0];
 
   return (
-    <div className="mx-auto flex w-full max-w-5xl flex-col items-center gap-8 px-6 py-10">
-      <header className="flex flex-col items-center gap-3 text-center">
-        <div className="inline-flex items-center gap-2 rounded-full border border-border/60 bg-border/20 px-4 py-2 text-xs uppercase tracking-[0.3em] text-muted-foreground">
-          <Sparkles className="h-4 w-4 text-accent" />
-          {t("matcher_title")}
-        </div>
-        <p className="max-w-2xl text-sm text-muted-foreground">{t("matcher_swipe_hint")}</p>
-        <Badge variant="outline">{t("matcher_queue_count", { count: queue.length })}</Badge>
-      </header>
-
-      {!isAuthenticated && (
-        <Card className="w-full max-w-md border-dashed border-border/60 bg-background/40 p-6 text-center text-sm text-muted-foreground">
-          {t("matcher_sign_in_prompt")}
-        </Card>
-      )}
-
-      {error && (
-        <Card className="w-full max-w-md border-destructive/60 bg-destructive/10 p-4 text-center text-sm text-destructive">
-          {error}
-        </Card>
-      )}
-
-      <div className="relative flex w-full justify-center">
-        <div className="relative h-[440px] w-full max-w-md">
-          {nextCandidate && (
-            <div className="pointer-events-none absolute inset-0 flex justify-center">
-              {renderPreviewCard(nextCandidate)}
+    <div className="relative isolate flex min-h-screen flex-col bg-background">
+      <div className="pointer-events-none absolute inset-x-0 top-0 -z-10 h-[460px] bg-gradient-to-b from-accent/30 via-transparent to-transparent blur-3xl" />
+      <section className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-16 px-6 py-16">
+        <div className="grid gap-12 lg:grid-cols-[1.05fr_0.95fr]">
+          <div className="flex flex-col gap-6">
+            <div className="inline-flex items-center gap-2 rounded-full border border-border/60 bg-border/20 px-3 py-1 text-xs uppercase tracking-[0.3em] text-muted-foreground">
+              <Sparkles className="h-4 w-4" /> Matcher
             </div>
-          )}
-          {topCandidate ? (
-            <motion.div
-              key={topCandidate.userId}
-              className="absolute inset-0 flex justify-center"
-              drag="x"
-              dragElastic={0.4}
-              dragConstraints={{ left: 0, right: 0 }}
-              style={{ x, rotate }}
-              animate={controls}
-              whileTap={{ scale: 0.98 }}
-              onDragEnd={handleDragEnd}
-            >
-              <Card className="w-full max-w-md overflow-hidden bg-card/90 shadow-2xl">
-                <div className="space-y-6 p-6">
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="flex items-start gap-3">
-                      <Link href={`/profile/${topCandidate.userId}`} className="group flex gap-3">
-                        <AvatarCircle candidate={topCandidate} size={72} />
-                        <div>
-                          <h2 className="text-2xl font-semibold text-white group-hover:text-accent transition-colors">
-                            {topCandidate.displayName}
-                          </h2>
-                          <p className="text-xs text-muted-foreground group-hover:text-white">
-                            {t("matcher_view_profile")}
-                          </p>
-                        </div>
-                      </Link>
-                    </div>
-                    {renderCandidateBadges(topCandidate)}
-                  </div>
-                  {topCandidate.bio && <p className="text-sm text-muted-foreground">{topCandidate.bio}</p>}
-
-                  {sharedSkills.length > 0 && (
-                    <div className="space-y-2">
-                      <p className="text-xs uppercase tracking-[0.3em] text-muted-foreground">
-                        {t("matcher_shared_skills")}
-                      </p>
-                      <div className="flex flex-wrap gap-2">
-                        {sharedSkills.slice(0, 6).map((skill) => (
-                          <Badge key={skill} variant="accent">
-                            {skill}
-                          </Badge>
-                        ))}
-                      </div>
-                    </div>
+            <div className="space-y-4">
+              <Badge variant="secondary" className="w-fit bg-accent/20 text-accent">
+                Swipe deck preview
+              </Badge>
+              <h1 className="text-balance font-[family-name:var(--font-display)] text-4xl font-semibold text-white sm:text-5xl">
+                Show the chemistry before members ever sign in
+              </h1>
+              <p className="max-w-2xl text-lg text-muted-foreground">
+                Drop this landing page in sales materials to prove your matchmaking engine works. Swipe-ready cards,
+                vibe filters, and sentiment stats move even the most skeptical operators.
+              </p>
+            </div>
+            <div className="inline-flex flex-wrap gap-2 rounded-2xl border border-border/60 bg-border/20 p-2 text-sm text-muted-foreground">
+              {vibeFilters.map((filter) => (
+                <button
+                  key={filter.id}
+                  type="button"
+                  className={cn(
+                    "rounded-xl px-3 py-2 font-semibold transition",
+                    activeFilter === filter.id ? "bg-background/80 text-white" : "hover:text-white"
                   )}
-
-                  {topCandidate.skills.length > 0 && (
-                    <div className="space-y-2">
-                      <p className="text-xs uppercase tracking-[0.3em] text-muted-foreground">
-                        {t("matcher_all_skills")}
-                      </p>
-                      <div className="flex flex-wrap gap-2">
-                        {topCandidate.skills.slice(0, 12).map((skill) => (
-                          <Badge key={skill} variant="outline">
-                            {skill}
-                          </Badge>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                  <div>
-                    <Button variant="link" className="px-0 text-sm" asChild>
-                      <Link href={`/profile/${topCandidate.userId}`}>{t("matcher_view_profile")}</Link>
-                    </Button>
-                  </div>
-                </div>
-              </Card>
-            </motion.div>
-          ) : (
-            <Card className="absolute inset-0 flex items-center justify-center border-border/60 bg-background/40 p-6 text-center text-sm text-muted-foreground">
-              {loading ? t("generic_loading_matches") : t("matcher_no_more")}
-            </Card>
-          )}
+                  onClick={() => {
+                    setActiveFilter(filter.id);
+                    setActiveIndex(0);
+                  }}
+                >
+                  {filter.label}
+                </button>
+              ))}
+            </div>
+            <div className="flex flex-col gap-3 sm:flex-row">
+              <Button asChild size="lg" className="gap-2">
+                <Link href={primaryCtaHref}>
+                  {primaryCtaLabel}
+                  <ArrowRight className="h-4 w-4" />
+                </Link>
+              </Button>
+              <Button asChild size="lg" variant="outline" className="gap-2">
+                <Link href="/matcher/workspace">
+                  Enter swipe room
+                  <ArrowRight className="h-4 w-4" />
+                </Link>
+              </Button>
+            </div>
+            <div className="grid gap-4 sm:grid-cols-3">
+              {proofPoints.map((point) => (
+                <Card key={point.label} className="border border-border/40 bg-card/50">
+                  <CardContent className="space-y-1 p-4">
+                    <p className="text-xs uppercase tracking-[0.4em] text-muted-foreground">{point.label}</p>
+                    <p className="text-2xl font-semibold text-white">{point.value}</p>
+                    <p className="text-xs text-accent">{point.detail}</p>
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+          </div>
+          <CandidateStack stories={filteredDeck} activeStory={activeStory} />
         </div>
-      </div>
 
-      <div className="mt-8 flex w-full max-w-md items-center justify-center gap-4">
-        <Button
-          variant="outline"
-          size="icon"
-          className="h-14 w-14 rounded-full border-destructive/40 text-destructive"
-          onClick={() => void handleDecision("skip")}
-          disabled={!topCandidate || isAnimating}
-        >
-          <X className="h-6 w-6" />
-        </Button>
-        <Button
-          variant="outline"
-          size="icon"
-          className="h-12 w-12 rounded-full text-muted-foreground"
-          onClick={() => void refresh()}
-          disabled={loading || isAnimating}
-        >
-          <RefreshCcw className="h-5 w-5" />
-        </Button>
-        <Button
-          variant="accent"
-          size="icon"
-          className="h-14 w-14 rounded-full"
-          onClick={() => void handleDecision("connect")}
-          disabled={!topCandidate || isAnimating}
-        >
-          <Heart className="h-6 w-6" />
-        </Button>
-      </div>
+        <section className="grid gap-6 md:grid-cols-3">
+          {benefits.map((benefit) => (
+            <Card
+              key={benefit.title}
+              className="border border-border/50 bg-card/50 transition duration-300 hover:-translate-y-1 hover:border-accent"
+            >
+              <CardContent className="flex flex-col gap-4 p-6">
+                <benefit.icon className="h-8 w-8 text-accent" />
+                <h3 className="text-lg font-semibold text-white">{benefit.title}</h3>
+                <p className="text-sm text-muted-foreground">{benefit.copy}</p>
+              </CardContent>
+            </Card>
+          ))}
+        </section>
+
+        <section className="grid gap-8 rounded-3xl border border-border/50 bg-card/40 p-8 lg:grid-cols-[1.2fr_0.8fr]">
+          <div className="space-y-5">
+            <Badge variant="secondary" className="bg-accent/20 text-accent">
+              Conversion lift
+            </Badge>
+            <h2 className="text-3xl font-semibold text-white">Use this landing to prove you can curate the right matches</h2>
+            <p className="text-base text-muted-foreground">
+              Stakeholders swipe through living profiles with hover states, badges, and context-rich stats. When they are
+              convinced, the live matcher workspace is one click away.
+            </p>
+            <ul className="space-y-3 text-sm text-muted-foreground">
+              <li className="flex items-center gap-2">
+                <Heart className="h-4 w-4 text-rose-400" /> Sentiment tagging from every swipe
+              </li>
+              <li className="flex items-center gap-2">
+                <MapPin className="h-4 w-4 text-emerald-400" /> Hub-based multipliers with travel heat
+              </li>
+              <li className="flex items-center gap-2">
+                <Star className="h-4 w-4 text-amber-300" /> Priority boosts for curated members
+              </li>
+            </ul>
+          </div>
+          <Card className="border border-border/40 bg-background/80">
+            <CardContent className="space-y-4 p-6">
+              <div className="flex items-center gap-3">
+                <Sparkles className="h-8 w-8 text-accent" />
+                <div>
+                  <p className="text-xs uppercase tracking-[0.3em] text-muted-foreground">Current spotlight</p>
+                  <p className="text-lg font-semibold text-white">{activeStory?.name}</p>
+                </div>
+              </div>
+              <p className="text-sm text-muted-foreground">{activeStory?.quote}</p>
+              <div className="rounded-2xl border border-border/40 bg-border/10 p-4 text-sm">
+                <p className="text-white">{activeStory?.role}</p>
+                <p className="text-muted-foreground">{activeStory?.hub}</p>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {activeStory?.skills.map((skill) => (
+                    <Badge key={skill} variant="outline">
+                      {skill}
+                    </Badge>
+                  ))}
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        </section>
+
+        <section className="rounded-3xl border border-border/50 bg-gradient-to-br from-border/40 via-background to-background p-8 text-center">
+          <p className="text-xs uppercase tracking-[0.4em] text-muted-foreground">Swipe-ready preview</p>
+          <h2 className="mt-4 text-3xl font-semibold text-white">Set the tone with a no-login matcher teaser</h2>
+          <p className="mt-2 text-base text-muted-foreground">
+            Keep operators engaged with a living deck, then route them directly to the authenticated swipe room.
+          </p>
+          <div className="mt-6 flex flex-col items-center justify-center gap-3 sm:flex-row">
+            <Button asChild size="lg" className="gap-2">
+              <Link href={primaryCtaHref}>
+                {primaryCtaLabel}
+                <ArrowRight className="h-4 w-4" />
+              </Link>
+            </Button>
+            <Button asChild size="lg" variant="outline">
+              <Link href="/matcher/workspace">Open the live matcher</Link>
+            </Button>
+          </div>
+        </section>
+      </section>
     </div>
   );
 }
+
+const CandidateStack = ({
+  stories,
+  activeStory
+}: {
+  stories: typeof candidateStories;
+  activeStory: (typeof candidateStories)[number];
+}) => {
+  if (!stories.length || !activeStory) {
+    return (
+      <Card className="border border-border/60 bg-card/60">
+        <CardContent className="p-6 text-sm text-muted-foreground">No preview available for this filter.</CardContent>
+      </Card>
+    );
+  }
+
+  return (
+    <div className="relative h-[420px]">
+      {stories.map((story, index) => {
+        const depth = stories.length - index;
+        return (
+          <div
+            key={story.name}
+            className={cn(
+              "absolute inset-0 transition duration-300",
+              depth === stories.length ? "z-30" : depth === stories.length - 1 ? "z-20" : "z-10"
+            )}
+            style={{ transform: `translateY(${index * 12}px) scale(${1 - index * 0.03})`, opacity: 1 - index * 0.15 }}
+          >
+            <Card className="h-full border border-border/50 bg-card/80 shadow-2xl">
+              <CardContent className="flex h-full flex-col gap-4 p-6">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-xs uppercase tracking-[0.3em] text-muted-foreground">{story.hub}</p>
+                    <p className="text-2xl font-semibold text-white">{story.name}</p>
+                    <p className="text-sm text-muted-foreground">{story.role}</p>
+                  </div>
+                  <Heart className="h-6 w-6 text-rose-400" />
+                </div>
+                <p className="text-sm text-muted-foreground">{story.quote}</p>
+                <div className="flex flex-wrap gap-2">
+                  {story.skills.map((skill) => (
+                    <Badge key={skill} variant="outline">
+                      {skill}
+                    </Badge>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+        );
+      })}
+    </div>
+  );
+};
