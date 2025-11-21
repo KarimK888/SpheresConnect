@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import Image from "next/image";
 import { useI18n } from "@/context/i18n";
 import { useAuth } from "@/hooks/useAuth";
 import { Card } from "@/components/ui/card";
@@ -79,12 +80,15 @@ const AvatarBubble = ({
       title={fallbackLabel}
     >
       {user?.profilePictureUrl ? (
-        <img
+        <Image
           src={user.profilePictureUrl}
           alt={fallbackLabel}
+          fill
+          sizes={`${size}px`}
+          className="object-cover"
           loading="lazy"
-          className="h-full w-full object-cover"
           referrerPolicy="no-referrer"
+          unoptimized
         />
       ) : (
         <span className="flex h-full w-full items-center justify-center">{initials}</span>
@@ -172,7 +176,7 @@ export const EventsClient = ({ upcoming, past, directory, hubs, presence }: Even
   );
 
   const hubList = useMemo(() => Object.values(hubDirectory ?? {}), [hubDirectory]);
-  const presenceByHub = presenceState ?? {};
+  const presenceByHub = useMemo(() => presenceState ?? {}, [presenceState]);
 
   const eventHubMap = useMemo(() => {
     if (!hubList.length) return {};

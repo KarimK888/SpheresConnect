@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import Image from "next/image";
 import { Map as HubMapView } from "@/components/Map";
 import { Switch } from "@/components/ui/switch";
 import { Button } from "@/components/ui/button";
@@ -52,17 +53,20 @@ const PresenceAvatar = ({ profile, size = 28 }: { profile: User; size?: number }
   const initials = getInitials(profile.displayName ?? profile.email);
   return (
     <div
-      className="overflow-hidden rounded-full border border-border/60 bg-background/60 text-[0.55rem] font-semibold uppercase text-white"
+      className="relative overflow-hidden rounded-full border border-border/60 bg-background/60 text-[0.55rem] font-semibold uppercase text-white"
       style={{ width: size, height: size }}
       title={profile.displayName ?? profile.email}
     >
       {profile.profilePictureUrl ? (
-        <img
+        <Image
           src={profile.profilePictureUrl}
           alt={profile.displayName ?? profile.email}
-          className="h-full w-full object-cover"
+          fill
+          sizes={`${size}px`}
+          className="object-cover"
           loading="lazy"
           referrerPolicy="no-referrer"
+          unoptimized
         />
       ) : (
         <span className="flex h-full w-full items-center justify-center">{initials}</span>

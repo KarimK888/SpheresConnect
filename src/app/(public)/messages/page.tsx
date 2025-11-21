@@ -10,25 +10,34 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 
-type FeatureBase = {
+type TranslateFn = ReturnType<typeof useI18n>["t"];
+type TranslationKey = Parameters<TranslateFn>[0];
+
+type FeatureConfig = {
   icon: typeof MessageSquare;
-  titleKey: string;
-  copyKey: string;
+  titleKey: TranslationKey;
+  copyKey: TranslationKey;
 };
 
-const featureBase: FeatureBase[] = [
+const featureBase: ReadonlyArray<FeatureConfig> = [
   { icon: MessageSquare, titleKey: "messages_feature_thread_title", copyKey: "messages_feature_thread_copy" },
   { icon: Paperclip, titleKey: "messages_feature_media_title", copyKey: "messages_feature_media_copy" },
   { icon: Wifi, titleKey: "messages_feature_presence_title", copyKey: "messages_feature_presence_copy" }
 ];
 
-const complianceBase = [
+const complianceBase: ReadonlyArray<{ titleKey: TranslationKey; detailKey: TranslationKey }> = [
   { titleKey: "messages_compliance_moderation_title", detailKey: "messages_compliance_moderation_detail" },
   { titleKey: "messages_compliance_audit_title", detailKey: "messages_compliance_audit_detail" },
   { titleKey: "messages_compliance_isolation_title", detailKey: "messages_compliance_isolation_detail" }
 ];
 
-const chatScriptBase = [
+const chatScriptBase: ReadonlyArray<{
+  id: string;
+  sender: string;
+  textKey: TranslationKey;
+  timestamp: string;
+  accent: string;
+}> = [
   { id: "1", sender: "Nova", textKey: "messages_chat_text_1", timestamp: "11:04", accent: "text-white" },
   { id: "2", sender: "Dev", textKey: "messages_chat_text_2", timestamp: "11:05", accent: "text-emerald-300" },
   { id: "3", sender: "Mika", textKey: "messages_chat_text_3", timestamp: "11:06", accent: "text-amber-300" }
@@ -246,16 +255,16 @@ const ChatPreview = ({
 const buildMessagesCopy = (t: TranslateFn): MessagesCopy => {
   const features = featureBase.map((feature) => ({
     icon: feature.icon,
-    title: t(feature.titleKey as any),
-    copy: t(feature.copyKey as any)
+    title: t(feature.titleKey),
+    copy: t(feature.copyKey)
   }));
   const compliance = complianceBase.map((item) => ({
-    title: t(item.titleKey as any),
-    detail: t(item.detailKey as any)
+    title: t(item.titleKey),
+    detail: t(item.detailKey)
   }));
   const chatScript = chatScriptBase.map((entry) => ({
     ...entry,
-    text: t(entry.textKey as any)
+    text: t(entry.textKey)
   }));
 
   return {

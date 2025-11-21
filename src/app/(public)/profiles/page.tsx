@@ -42,6 +42,7 @@ type ProfilesCopy = {
 };
 
 type TranslateFn = ReturnType<typeof useI18n>["t"];
+type TranslationKey = Parameters<TranslateFn>[0];
 
 const industryIds = ["visuals", "sound", "collectors", "ops"] as const;
 
@@ -319,16 +320,16 @@ const ProfilesPreview = ({
 const buildProfilesCopy = (t: TranslateFn): ProfilesCopy => {
   const filters = industryIds.map((id) => ({ id, label: t(`profiles_filter_${id}` as const) }));
   const metrics = metricBase.map((metric) => ({
-    label: t(metric.labelKey as any),
+    label: t(metric.labelKey as TranslationKey),
     value: metric.value,
     caption: t("profiles_metric_caption")
   }));
   const proofPoints = proofBase.map((item) => ({
     icon: item.icon,
-    title: t(item.titleKey as any),
-    copy: t(item.bodyKey as any)
+    title: t(item.titleKey as TranslationKey),
+    copy: t(item.bodyKey as TranslationKey)
   }));
-  const confidence = confidenceBullets.map((bullet) => ({ icon: bullet.icon, text: t(bullet.textKey as any) }));
+  const confidence = confidenceBullets.map((bullet) => ({ icon: bullet.icon, text: t(bullet.textKey as TranslationKey) }));
   const cards = spotlightBase.map((profile) => ({
     ...profile,
     craft: t(`profiles_spotlight_${profile.id}_craft` as const)

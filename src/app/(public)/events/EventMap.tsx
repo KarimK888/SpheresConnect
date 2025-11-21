@@ -43,7 +43,7 @@ export const EventMap = ({ events, focusEventId, onSelect, directory, hubs, pres
   );
 
   const hubList = useMemo(() => Object.values(hubs ?? {}), [hubs]);
-  const presenceByHub = presence ?? {};
+  const presenceByHub = useMemo(() => presence ?? {}, [presence]);
 
   const eventHubMap = useMemo(() => {
     if (!eventsWithLocation.length || !hubList.length) {
@@ -151,7 +151,7 @@ export const EventMap = ({ events, focusEventId, onSelect, directory, hubs, pres
         mapRef.current!.fitBounds(bounds, { padding: 60, maxZoom: 9, duration: 600 });
       }
     });
-  }, [eventsWithLocation, focusEventId, onSelect]);
+  }, [directory, eventHubMap, eventsWithLocation, focusEventId, onSelect, presenceByHub, t]);
 
   useEffect(() => {
     if (!mapRef.current || !focusedEvent?.location) return;
