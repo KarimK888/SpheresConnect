@@ -1,34 +1,14 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import Link from "next/link";
 import { AlarmClock, ArrowRight, CalendarDays, Clock4, Mic2, Ticket } from "lucide-react";
 import { useSessionState } from "@/context/session";
+import { useI18n } from "@/context/i18n";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
-
-const eventStages = [
-  {
-    id: "ideate",
-    title: "Ideate",
-    detail: "Collect pitches, score them, and auto-build run-of-show.",
-    metric: "36h approvals"
-  },
-  {
-    id: "promote",
-    title: "Promote",
-    detail: "Issue waitlist invites, push SMS reminders, and embed RSVP widgets.",
-    metric: "92% show-up"
-  },
-  {
-    id: "recap",
-    title: "Recap",
-    detail: "Publish highlights, payouts, and attendee analytics instantly.",
-    metric: "Ready in 10m"
-  }
-] as const;
 
 const spotlightEvents = [
   {
@@ -54,30 +34,17 @@ const spotlightEvents = [
   }
 ];
 
-const logistics = [
-  {
-    icon: CalendarDays,
-    title: "Stacked agenda",
-    copy: "Back-to-back scheduling with travel buffers built-in."
-  },
-  {
-    icon: Ticket,
-    title: "Badging",
-    copy: "Generate NFC badges and QR wristbands directly from the landing."
-  },
-  {
-    icon: Mic2,
-    title: "Talent ops",
-    copy: "Brief hosts with scripts, payments, and shared files."
-  }
-];
+type TranslateFn = ReturnType<typeof useI18n>["t"];
 
 export default function EventsLandingPage() {
+  const { t } = useI18n();
   const sessionUser = useSessionState((state) => state.user);
-  const [activeStage, setActiveStage] = useState<(typeof eventStages)[number]["id"]>("ideate");
+  const stages = useMemo(() => buildEventStages(t), [t]);
+  const logistics = useMemo(() => buildEventLogistics(t), [t]);
+  const [activeStage, setActiveStage] = useState(stages[0]?.id ?? "ideate");
 
   const primaryCtaHref = sessionUser ? "/events/workspace" : "/signup";
-  const primaryCtaLabel = sessionUser ? "Open run of show" : "Plan events";
+  const primaryCtaLabel = sessionUser ? t("events_cta_primary_authed") : t("events_cta_primary_guest");
 
   return (
     <div className="relative isolate flex min-h-screen flex-col bg-background">
@@ -86,22 +53,19 @@ export default function EventsLandingPage() {
         <div className="grid gap-12 lg:grid-cols-[1.05fr_0.95fr]">
           <div className="flex flex-col gap-6">
             <div className="inline-flex items-center gap-2 rounded-full border border-border/60 bg-border/20 px-3 py-1 text-xs uppercase tracking-[0.3em] text-muted-foreground">
-              <CalendarDays className="h-4 w-4" /> Events
+              <CalendarDays className="h-4 w-4" /> {t("events_landing_tag")}
             </div>
             <div className="space-y-4">
               <Badge variant="secondary" className="w-fit bg-accent/20 text-accent">
-                Run of show preview
+                {t("events_landing_badge")}
               </Badge>
               <h1 className="text-balance font-[family-name:var(--font-display)] text-4xl font-semibold text-white sm:text-5xl">
-                Sell your calendar before the doors even open
+                {t("events_landing_title")}
               </h1>
-              <p className="max-w-2xl text-lg text-muted-foreground">
-                Offer partners a clear, interactive overview of your programming cadence. Every element mirrors the live
-                events workspace waiting behind the login.
-              </p>
+              <p className="max-w-2xl text-lg text-muted-foreground">{t("events_landing_description")}</p>
             </div>
             <div className="inline-flex flex-wrap gap-2 rounded-2xl border border-border/60 bg-border/20 p-2 text-sm text-muted-foreground">
-              {eventStages.map((stage) => (
+              {stages.map((stage) => (
                 <button
                   key={stage.id}
                   type="button"
@@ -123,11 +87,11 @@ export default function EventsLandingPage() {
                 </Link>
               </Button>
               <Button asChild size="lg" variant="outline">
-                <Link href="/events/workspace">Enter live calendar</Link>
+                <Link href="/events/workspace">{t("events_cta_secondary")}</Link>
               </Button>
             </div>
           </div>
-          <SchedulePreview activeStage={activeStage} />
+          <SchedulePreview activeStage={activeStage} stages={stages} />
         </div>
 
         <section className="grid gap-6 md:grid-cols-3">
@@ -149,13 +113,10 @@ export default function EventsLandingPage() {
           <div className="flex flex-col gap-8 lg:flex-row">
             <div className="flex-1 space-y-4">
               <Badge variant="secondary" className="bg-accent/20 text-accent">
-                Spotlight nights
+                {t("events_spotlight_badge")}
               </Badge>
-              <h2 className="text-3xl font-semibold text-white">Highlight programming cadence without a login</h2>
-              <p className="text-base text-muted-foreground">
-                Share this living calendar with sponsors, partners, and talent scouts. They see real data—attendance,
-                host readiness, and payout tiers—without needing credentials.
-              </p>
+              <h2 className="text-3xl font-semibold text-white">{t("events_spotlight_heading")}</h2>
+              <p className="text-base text-muted-foreground">{t("events_spotlight_body")}</p>
               <div className="grid gap-4 md:grid-cols-3">
                 {spotlightEvents.map((event) => (
                   <div key={event.name} className="rounded-2xl border border-border/40 bg-border/10 p-4">
@@ -176,25 +137,20 @@ export default function EventsLandingPage() {
                 <div className="flex items-center gap-3">
                   <Clock4 className="h-8 w-8 text-accent" />
                   <div>
-                    <p className="text-xs uppercase tracking-[0.3em] text-muted-foreground">Average prep window</p>
-                    <p className="text-lg font-semibold text-white">3.6 days</p>
+                    <p className="text-xs uppercase tracking-[0.3em] text-muted-foreground">{t("events_stats_label")}</p>
+                    <p className="text-lg font-semibold text-white">{t("events_stats_value")}</p>
                   </div>
                 </div>
-                <p className="text-sm text-muted-foreground">
-                  Auto-generated run of show, vendor list, and tech checks keep every event consistent. When teams need
-                  deeper controls they jump straight into the authenticated workspace.
-                </p>
+                <p className="text-sm text-muted-foreground">{t("events_stats_body")}</p>
               </CardContent>
             </Card>
           </div>
         </section>
 
         <section className="rounded-3xl border border-border/50 bg-gradient-to-br from-border/40 via-background to-background p-8 text-center">
-          <p className="text-xs uppercase tracking-[0.4em] text-muted-foreground">Run of show preview</p>
-          <h2 className="mt-3 text-3xl font-semibold text-white">Let partners live inside your calendar without credentials</h2>
-          <p className="mt-2 text-base text-muted-foreground">
-            When it is time to produce, unlock the full events workspace with one invite.
-          </p>
+          <p className="text-xs uppercase tracking-[0.4em] text-muted-foreground">{t("events_landing_badge")}</p>
+          <h2 className="mt-3 text-3xl font-semibold text-white">{t("events_footer_heading")}</h2>
+          <p className="mt-2 text-base text-muted-foreground">{t("events_footer_body")}</p>
           <div className="mt-6 flex flex-col items-center justify-center gap-3 sm:flex-row">
             <Button asChild size="lg" className="gap-2">
               <Link href={primaryCtaHref}>
@@ -203,7 +159,7 @@ export default function EventsLandingPage() {
               </Link>
             </Button>
             <Button asChild size="lg" variant="outline">
-              <Link href="/events/workspace">Open live scheduler</Link>
+              <Link href="/events/workspace">{t("events_cta_secondary")}</Link>
             </Button>
           </div>
         </section>
@@ -212,14 +168,21 @@ export default function EventsLandingPage() {
   );
 }
 
-const SchedulePreview = ({ activeStage }: { activeStage: (typeof eventStages)[number]["id"] }) => {
-  const stage = eventStages.find((entry) => entry.id === activeStage) ?? eventStages[0];
+const SchedulePreview = ({
+  activeStage,
+  stages
+}: {
+  activeStage: string;
+  stages: ReturnType<typeof buildEventStages>;
+}) => {
+  const { t } = useI18n();
+  const stage = stages.find((entry) => entry.id === activeStage) ?? stages[0];
 
   return (
     <div className="rounded-3xl border border-border/60 bg-card/70 p-6 shadow-[0_25px_90px_rgba(0,0,0,0.55)]">
       <div className="mb-4 flex items-center justify-between text-xs uppercase tracking-[0.4em] text-muted-foreground">
-        <span>Stage preview</span>
-        <span>Realtime</span>
+        <span>{t("events_preview_title")}</span>
+        <span>{t("events_preview_status")}</span>
       </div>
       <div className="rounded-2xl border border-border/40 bg-background/70 p-5">
         <p className="text-xs uppercase tracking-[0.3em] text-muted-foreground">{stage.title}</p>
@@ -237,9 +200,36 @@ const SchedulePreview = ({ activeStage }: { activeStage: (typeof eventStages)[nu
       <div className="mt-4 rounded-2xl border border-border/40 bg-border/10 p-4 text-sm text-muted-foreground">
         <div className="flex items-center gap-2">
           <AlarmClock className="h-4 w-4 text-accent" />
-          Reminder workflow ready once attendees RSVP.
+          {t("events_preview_reminder")}
         </div>
       </div>
     </div>
   );
 };
+
+const buildEventStages = (t: TranslateFn) => [
+  {
+    id: "ideate",
+    title: t("events_stage_ideate_title"),
+    detail: t("events_stage_ideate_detail"),
+    metric: t("events_stage_ideate_metric")
+  },
+  {
+    id: "promote",
+    title: t("events_stage_promote_title"),
+    detail: t("events_stage_promote_detail"),
+    metric: t("events_stage_promote_metric")
+  },
+  {
+    id: "recap",
+    title: t("events_stage_recap_title"),
+    detail: t("events_stage_recap_detail"),
+    metric: t("events_stage_recap_metric")
+  }
+];
+
+const buildEventLogistics = (t: TranslateFn) => [
+  { icon: CalendarDays, title: t("events_logistics_agenda_title"), copy: t("events_logistics_agenda_copy") },
+  { icon: Ticket, title: t("events_logistics_badging_title"), copy: t("events_logistics_badging_copy") },
+  { icon: Mic2, title: t("events_logistics_talent_title"), copy: t("events_logistics_talent_copy") }
+];

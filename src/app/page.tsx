@@ -51,7 +51,7 @@ export default function Home() {
         setCreatives(curated);
       } catch (error) {
         console.error("[home] failed to load creatives", error);
-        if (active) setCreativeError("Unable to load member profiles right now.");
+        if (active) setCreativeError(t("profiles_error"));
       } finally {
         if (active) setCreativesLoading(false);
       }
@@ -59,7 +59,7 @@ export default function Home() {
     return () => {
       active = false;
     };
-  }, []);
+  }, [t]);
 
   useEffect(() => {
     let active = true;
@@ -75,7 +75,7 @@ export default function Home() {
         setListings(curated);
       } catch (error) {
         console.error("[home] failed to load listings", error);
-        if (active) setListingError("Unable to load marketplace listings right now.");
+        if (active) setListingError(t("marketplace_error_loading"));
       } finally {
         if (active) setListingsLoading(false);
       }
@@ -83,77 +83,78 @@ export default function Home() {
     return () => {
       active = false;
     };
-  }, []);
+  }, [t]);
 
   const heroFlows = useMemo(
     () => [
       {
         id: "network",
-        kicker: "AI-matched network",
-        title: "Where creatives connect, collaborate, and ship faster",
-        description:
-          "Introduce SpheresConnect with a glimpse of the verified directory, matcher deck, and hub map before people even log in.",
-        ctaLabel: sessionUser ? "Open workspace" : "Join the network",
+        kicker: t("home_flow_network_kicker"),
+        title: t("home_flow_network_title"),
+        description: t("home_flow_network_description"),
+        ctaLabel: sessionUser ? t("home_flow_network_cta_authed") : t("home_flow_network_cta_guest"),
         primaryHref: sessionUser ? "/profiles/workspace" : "/signup",
         secondaryHref: "/hub-map",
-        stats: [{ label: "Verified members", value: "2,941" }]
+        stats: [{ label: t("home_flow_network_stat_label"), value: "2,941" }]
       },
       {
         id: "ops",
-        kicker: "Operations OS",
-        title: "Run sprints, drops, and events in the same control room",
-        description:
-          "Productivity boards, events calendar, and rewards automation stay in sync. Stakeholders preview everything from our public landing pages.",
-        ctaLabel: sessionUser ? "Enter productivity" : "See the OS",
+        kicker: t("home_flow_ops_kicker"),
+        title: t("home_flow_ops_title"),
+        description: t("home_flow_ops_description"),
+        ctaLabel: sessionUser ? t("home_flow_ops_cta_authed") : t("home_flow_ops_cta_guest"),
         primaryHref: sessionUser ? "/productivity/workspace" : "/productivity",
         secondaryHref: "/events",
-        stats: [{ label: "Workspaces live", value: "146" }]
+        stats: [{ label: t("home_flow_ops_stat_label"), value: "146" }]
       }
     ],
-    [sessionUser]
+    [sessionUser, t]
   );
 
   const [activeFlowId, setActiveFlowId] = useState(heroFlows[0]?.id ?? "network");
   const activeFlow = heroFlows.find((flow) => flow.id === activeFlowId) ?? heroFlows[0];
 
-  const landingRoutes = [
-    {
-      title: "Productivity",
-      copy: "Preview kanban + calendar decks without a login.",
-      href: "/productivity",
-      icon: Workflow
-    },
-    {
-      title: "Matcher",
-      copy: "Swipe a curated deck of creatives before inviting them in.",
-      href: "/matcher",
-      icon: Users
-    },
-    {
-      title: "Marketplace",
-      copy: "Share commerce-ready drops with payment guardrails.",
-      href: "/marketplace",
-      icon: Store
-    },
-    {
-      title: "Profiles",
-      copy: "Expose verified portfolios and endorsements safely.",
-      href: "/profiles",
-      icon: LayoutDashboard
-    },
-    {
-      title: "Messages",
-      copy: "Demo your async rituals with a live thread dribble.",
-      href: "/messages",
-      icon: MessageSquare
-    },
-    {
-      title: "Rewards",
-      copy: "Simulate loyalty tiers and automation lanes instantly.",
-      href: "/rewards",
-      icon: Crown
-    }
-  ];
+  const landingRoutes = useMemo(
+    () => [
+      {
+        title: t("home_routes_productivity_title"),
+        copy: t("home_routes_productivity_copy"),
+        href: "/productivity",
+        icon: Workflow
+      },
+      {
+        title: t("home_routes_matcher_title"),
+        copy: t("home_routes_matcher_copy"),
+        href: "/matcher",
+        icon: Users
+      },
+      {
+        title: t("home_routes_marketplace_title"),
+        copy: t("home_routes_marketplace_copy"),
+        href: "/marketplace",
+        icon: Store
+      },
+      {
+        title: t("home_routes_profiles_title"),
+        copy: t("home_routes_profiles_copy"),
+        href: "/profiles",
+        icon: LayoutDashboard
+      },
+      {
+        title: t("home_routes_messages_title"),
+        copy: t("home_routes_messages_copy"),
+        href: "/messages",
+        icon: MessageSquare
+      },
+      {
+        title: t("home_routes_rewards_title"),
+        copy: t("home_routes_rewards_copy"),
+        href: "/rewards",
+        icon: Crown
+      }
+    ],
+    [t]
+  );
 
   return (
     <div className="flex min-h-screen flex-col gap-16 px-6 py-12">
@@ -161,7 +162,7 @@ export default function Home() {
         <div className="flex flex-col gap-6 text-left">
           <div className="inline-flex w-full items-center justify-between gap-4">
             <div className="inline-flex items-center gap-2 rounded-full border border-border/50 bg-border/30 px-4 py-2 text-xs uppercase tracking-[0.3em] text-muted-foreground">
-              <Sparkles size={12} /> AI-matched network for creatives
+              <Sparkles size={12} /> {t("home_tagline")}
             </div>
             <div className="inline-flex rounded-full border border-border/50 bg-border/20 px-3 py-1 text-xs uppercase tracking-[0.3em] text-muted-foreground">
               {activeFlow.kicker}
@@ -195,7 +196,7 @@ export default function Home() {
             </Button>
             <Button variant="outline" asChild size="lg">
               <Link href={activeFlow.secondaryHref}>
-                Explore hub map
+                {t("cta_explore")}
                 <MapPin className="ml-2 h-4 w-4" />
               </Link>
             </Button>
@@ -215,18 +216,18 @@ export default function Home() {
       <section className="mx-auto flex w-full max-w-6xl flex-col gap-6">
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div>
-            <p className="text-xs uppercase tracking-[0.3em] text-muted-foreground">Verified creatives</p>
+            <p className="text-xs uppercase tracking-[0.3em] text-muted-foreground">{t("home_creatives_badge")}</p>
             <h2 className="text-3xl font-semibold text-white">{t("profiles_section_heading")}</h2>
           </div>
           <Button variant="link" asChild>
-            <Link href="/profiles">View directory</Link>
+            <Link href="/profiles">{t("home_creatives_link")}</Link>
           </Button>
         </div>
         <div className="flex min-h-[200px] flex-wrap gap-6">
-          {creativesLoading && <p className="text-sm text-muted-foreground">Loading verified creatives...</p>}
+          {creativesLoading && <p className="text-sm text-muted-foreground">{t("home_creatives_loading")}</p>}
           {!creativesLoading && creativeError && <p className="text-sm text-destructive">{creativeError}</p>}
           {!creativesLoading && !creativeError && creatives.length === 0 && (
-            <p className="text-sm text-muted-foreground">No member profiles are live yet.</p>
+            <p className="text-sm text-muted-foreground">{t("home_creatives_empty")}</p>
           )}
           {!creativesLoading &&
             !creativeError &&
@@ -237,18 +238,18 @@ export default function Home() {
       <section className="mx-auto flex w-full max-w-6xl flex-col gap-6">
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div>
-            <p className="text-xs uppercase tracking-[0.3em] text-muted-foreground">Marketplace drops</p>
+            <p className="text-xs uppercase tracking-[0.3em] text-muted-foreground">{t("home_marketplace_badge")}</p>
             <h2 className="text-3xl font-semibold text-white">{t("nav_marketplace")}</h2>
           </div>
           <Button variant="link" asChild>
-            <Link href="/marketplace">Browse marketplace</Link>
+            <Link href="/marketplace">{t("home_marketplace_link")}</Link>
           </Button>
         </div>
         <div className="grid min-h-[220px] gap-6 md:grid-cols-3">
-          {listingsLoading && <p className="text-sm text-muted-foreground">Loading marketplace listings...</p>}
+          {listingsLoading && <p className="text-sm text-muted-foreground">{t("home_marketplace_loading")}</p>}
           {!listingsLoading && listingError && <p className="text-sm text-destructive">{listingError}</p>}
           {!listingsLoading && !listingError && listings.length === 0 && (
-            <p className="text-sm text-muted-foreground">No marketplace drops have been published yet.</p>
+            <p className="text-sm text-muted-foreground">{t("home_marketplace_empty")}</p>
           )}
           {!listingsLoading &&
             !listingError &&
@@ -256,22 +257,19 @@ export default function Home() {
         </div>
       </section>
 
-      <section className="mx-auto flex w-full max-w-6xl flex-col gap-6 rounded-3xl border border-border/60 bg-card/40 p-8 text-center">
-        <p className="text-xs uppercase tracking-[0.3em] text-muted-foreground">Launch faster</p>
-        <h2 className="text-3xl font-semibold text-white">Every core flow gets a public preview and a gated workspace</h2>
-        <p className="text-base text-muted-foreground">
-          Show prospects the magic at /productivity, /matcher, /hub-map, and more. When they are ready, route them into the
-          authenticated experience with a single click.
-        </p>
+        <section className="mx-auto flex w-full max-w-6xl flex-col gap-6 rounded-3xl border border-border/60 bg-card/40 p-8 text-center">
+        <p className="text-xs uppercase tracking-[0.3em] text-muted-foreground">{t("home_launch_badge")}</p>
+        <h2 className="text-3xl font-semibold text-white">{t("home_launch_title")}</h2>
+        <p className="text-base text-muted-foreground">{t("home_launch_body")}</p>
         <div className="mt-4 flex flex-col items-center justify-center gap-3 sm:flex-row">
           <Button asChild size="lg" className="gap-2">
             <Link href={sessionUser ? "/productivity/workspace" : "/signup"}>
-              {sessionUser ? "Enter control room" : "Create your workspace"}
+              {sessionUser ? t("home_launch_primary_authed") : t("home_launch_primary_guest")}
               <ArrowRight className="h-4 w-4" />
             </Link>
           </Button>
           <Button asChild size="lg" variant="outline">
-            <Link href="/productivity">Preview the OS</Link>
+            <Link href="/productivity">{t("home_launch_secondary")}</Link>
           </Button>
         </div>
       </section>
@@ -288,7 +286,9 @@ const LandingRouteGrid = ({
     href: string;
     icon: typeof Workflow;
   }[];
-}) => (
+}) => {
+  const { t } = useI18n();
+  return (
   <div className="grid gap-4 rounded-3xl border border-border/60 bg-card/70 p-6 shadow-[0_20px_80px_rgba(0,0,0,0.45)] md:grid-cols-2">
     {routes.map((route) => (
       <Card
@@ -303,7 +303,7 @@ const LandingRouteGrid = ({
           <p className="text-sm text-muted-foreground">{route.copy}</p>
           <Button asChild variant="ghost" className="justify-start gap-2 px-0 text-sm text-accent">
             <Link href={route.href}>
-              Explore
+              {t("home_routes_cta")}
               <ArrowRight className="h-4 w-4" />
             </Link>
           </Button>
@@ -311,4 +311,5 @@ const LandingRouteGrid = ({
       </Card>
     ))}
   </div>
-);
+  );
+};

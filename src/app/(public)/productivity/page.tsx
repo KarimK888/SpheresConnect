@@ -16,6 +16,7 @@ import {
   Workflow
 } from "lucide-react";
 import { useSessionState } from "@/context/session";
+import { useI18n } from "@/context/i18n";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -34,159 +35,26 @@ interface ColumnPreview {
   }[];
 }
 
-const heroViews: Record<
-  HeroViewKey,
-  {
-    kicker: string;
-    title: string;
-    description: string;
-    cta: string;
-  }
-> = {
-  sprint: {
-    kicker: "Ops teams",
-    title: "One kanban, calendar, and automation brain",
-    description:
-      "Lock creative ops, client services, and product pods into the same ritual. Priorities, blockers, and approvals stay in sync the instant you step inside the app.",
-    cta: "Launch the sprint hub"
-  },
-  campaign: {
-    kicker: "Studios & agencies",
-    title: "Package your entire campaign story before kickoff",
-    description:
-      "Demo stakeholder-ready roadmaps with live card previews, role-based sharing, and instant workspace duplication once the project is funded.",
-    cta: "Build campaign room"
-  }
-};
+const HERO_VIEW_KEYS: HeroViewKey[] = ["sprint", "campaign"];
+const WORKFLOW_MOMENT_IDS = ["plan", "execute", "review"] as const;
+type WorkflowMomentId = (typeof WORKFLOW_MOMENT_IDS)[number];
+type TranslateFn = ReturnType<typeof useI18n>["t"];
 
-const boardColumns: Record<HeroViewKey, ColumnPreview[]> = {
-  sprint: [
-    {
-      title: "Briefing",
-      accent: "text-accent",
-      tasks: [
-        { title: "Launch narrative draft", badge: "Copy", assignee: "Noah", due: "Due Today" },
-        { title: "Moodboard sourcing", badge: "Design", assignee: "Mika", due: "Tomorrow" }
-      ]
-    },
-    {
-      title: "In build",
-      accent: "text-emerald-300",
-      tasks: [
-        { title: "Prototype QA", badge: "Review", assignee: "Sasha", due: "Fri" },
-        { title: "Promo renders", badge: "3D", assignee: "Elle", due: "Mon" }
-      ]
-    },
-    {
-      title: "Launch prep",
-      accent: "text-amber-300",
-      tasks: [
-        { title: "Client approvals", badge: "Stakeholder", assignee: "Rae", due: "Next Wed" },
-        { title: "Creator payouts", badge: "Ops", assignee: "Dev", due: "Scheduled" }
-      ]
-    }
-  ],
-  campaign: [
-    {
-      title: "Discovery",
-      accent: "text-accent",
-      tasks: [
-        { title: "Talent shortlist", badge: "Hiring", assignee: "Jon", due: "Due Today" },
-        { title: "Budget rev 02", badge: "Finance", assignee: "Ivy", due: "Tomorrow" }
-      ]
-    },
-    {
-      title: "Production",
-      accent: "text-emerald-300",
-      tasks: [
-        { title: "Studio booking", badge: "Logistics", assignee: "Abi", due: "Fri" },
-        { title: "Shot sequencing", badge: "Creative", assignee: "Zee", due: "Sun" }
-      ]
-    },
-    {
-      title: "Delivery",
-      accent: "text-amber-300",
-      tasks: [
-        { title: "Client deck", badge: "Review", assignee: "Kai", due: "Next Tue" },
-        { title: "Paid placement", badge: "Media", assignee: "June", due: "Queued" }
-      ]
-    }
-  ]
-};
-
-const featureHighlights = [
-  {
-    title: "Tile-based kanban",
-    description: "Drag instantly, peek todos in a tray, and snapshot every move without leaving the board.",
-    icon: Workflow
-  },
-  {
-    title: "Calendar focus",
-    description: "Auto-group cards and todos by due date with lane heatmaps that warn before anything slips.",
-    icon: CalendarClock
-  },
-  {
-    title: "Signal alerts",
-    description: "Pulse notifications tie back to the exact card view, not just another inbox ping.",
-    icon: BellRing
-  }
-];
-
-const workflowMoments = [
-  {
-    id: "plan",
-    title: "Plan",
-    detail: "Clone proven templates, drop briefs, and preassign workflows for each collaborator.",
-    stats: "Templates launch in 32s"
-  },
-  {
-    id: "execute",
-    title: "Execute",
-    detail: "Inline todos and comment digests keep teammates focused in the right column.",
-    stats: "84% fewer status pings"
-  },
-  {
-    id: "review",
-    title: "Review",
-    detail: "Approvers see change diffs, due dates, and blockers without jumping into screenshare hell.",
-    stats: "Decisions logged in 1 click"
-  }
-] as const;
-
-const automationHighlights = [
-  {
-    title: "Presence aware",
-    copy: "Know who touched what and roll back with timed snapshots.",
-    icon: LayoutDashboard
-  },
-  {
-    title: "Latency proof",
-    copy: "Realtime Supabase sync keeps every surface aligned under 150ms.",
-    icon: AlarmClock
-  },
-  {
-    title: "Roster smart",
-    copy: "Auto-invite vendors as viewers, promote once work begins.",
-    icon: UserRound
-  }
-];
-
-const shippingMetrics = [
-  { label: "Time to kickoff", value: "2.4d", delta: "3x faster" },
-  { label: "Sprint predictability", value: "94%", delta: "+12 pts" },
-  { label: "Approvals cleared", value: "148", delta: "weekly" }
-];
-
-const trustSignals = [
-  "SOC2-ready guardrails",
-  "Realtime Supabase storage",
-  "Role-based sharing links"
-];
 
 export default function ProductivityLandingPage() {
+  const { t } = useI18n();
   const sessionUser = useSessionState((state) => state.user);
+
+  const heroViews = useMemo(() => buildHeroViews(t), [t]);
+  const boardColumns = useMemo(() => buildBoardColumns(t), [t]);
+  const featureHighlights = useMemo(() => buildFeatureHighlights(t), [t]);
+  const workflowMoments = useMemo(() => buildWorkflowMoments(t), [t]);
+  const automationHighlights = useMemo(() => buildAutomationHighlights(t), [t]);
+  const shippingMetrics = useMemo(() => buildShippingMetrics(t), [t]);
+  const trustSignals = useMemo(() => buildTrustSignals(t), [t]);
+
   const [activeHeroView, setActiveHeroView] = useState<HeroViewKey>("sprint");
-  const [activeMoment, setActiveMoment] = useState<(typeof workflowMoments)[number]["id"]>("plan");
+  const [activeMoment, setActiveMoment] = useState<WorkflowMomentId>("plan");
   const [metricIndex, setMetricIndex] = useState(0);
 
   useEffect(() => {
@@ -194,18 +62,20 @@ export default function ProductivityLandingPage() {
       setMetricIndex((prev) => (prev + 1) % shippingMetrics.length);
     }, 3800);
     return () => window.clearInterval(id);
-  }, []);
+  }, [shippingMetrics.length]);
 
   const heroView = heroViews[activeHeroView];
   const columns = boardColumns[activeHeroView];
   const activeMetric = shippingMetrics[metricIndex];
   const activeMomentCopy = useMemo(
     () => workflowMoments.find((moment) => moment.id === activeMoment) ?? workflowMoments[0],
-    [activeMoment]
+    [activeMoment, workflowMoments]
   );
 
   const primaryCtaHref = sessionUser ? "/productivity/workspace" : "/signup";
-  const primaryCtaLabel = sessionUser ? "Enter workspace" : "Get started";
+  const primaryCtaLabel = sessionUser
+    ? t("productivity_primary_cta_authenticated")
+    : t("productivity_primary_cta_guest");
 
   return (
     <div className="relative isolate flex min-h-screen flex-col bg-background">
@@ -214,7 +84,7 @@ export default function ProductivityLandingPage() {
         <div className="grid gap-12 lg:grid-cols-[1.05fr_0.95fr]">
           <div className="flex flex-col gap-8">
             <div className="inline-flex items-center gap-2 rounded-full border border-border/50 bg-border/20 px-3 py-1 text-xs uppercase tracking-[0.2em] text-muted-foreground">
-              <Sparkles className="h-4 w-4" /> Productivity hub
+              <Sparkles className="h-4 w-4" /> {t("productivity_tag_label")}
             </div>
             <div className="space-y-4">
               <p className="text-sm uppercase tracking-[0.4em] text-muted-foreground">{heroView.kicker}</p>
@@ -224,7 +94,7 @@ export default function ProductivityLandingPage() {
               <p className="max-w-2xl text-lg text-muted-foreground">{heroView.description}</p>
             </div>
             <div className="inline-grid grid-cols-2 gap-2 rounded-2xl border border-border/60 bg-border/20 p-2 text-sm shadow-inner shadow-black/40 sm:max-w-md">
-              {(Object.keys(heroViews) as HeroViewKey[]).map((key) => (
+              {HERO_VIEW_KEYS.map((key) => (
                 <button
                   key={key}
                   type="button"
@@ -247,7 +117,7 @@ export default function ProductivityLandingPage() {
               </Button>
               <Button asChild size="lg" variant="outline" className="gap-2">
                 <Link href="/demo">
-                  View product tour
+                  {t("productivity_secondary_cta_demo")}
                   <ArrowRight className="h-4 w-4" />
                 </Link>
               </Button>
@@ -281,13 +151,10 @@ export default function ProductivityLandingPage() {
         <section className="grid gap-8 rounded-3xl border border-border/50 bg-card/40 p-8 lg:grid-cols-[1.2fr_0.8fr]">
           <div className="space-y-6">
             <Badge variant="secondary" className="bg-accent/20 text-accent">
-              End-to-end flow
+              {t("productivity_flow_badge")}
             </Badge>
-            <h2 className="text-3xl font-semibold text-white">Preview every sprint step before granting access</h2>
-            <p className="text-base text-muted-foreground">
-              Hand clients or execs a living plan view with timelines, assignments, and focus filters. When they approve,
-              invite them into the exact same workspace already staged.
-            </p>
+            <h2 className="text-3xl font-semibold text-white">{t("productivity_flow_heading")}</h2>
+            <p className="text-base text-muted-foreground">{t("productivity_flow_body")}</p>
             <div className="grid gap-4 md:grid-cols-3">
               {workflowMoments.map((moment) => (
                 <button
@@ -307,26 +174,26 @@ export default function ProductivityLandingPage() {
             </div>
           </div>
           <div className="space-y-4 rounded-3xl border border-border/40 bg-gradient-to-b from-border/30 to-transparent p-6">
-            <h3 className="text-lg font-semibold text-white">Live moment</h3>
+            <h3 className="text-lg font-semibold text-white">{t("productivity_live_moment_title")}</h3>
             <p className="text-sm text-muted-foreground">{activeMomentCopy.detail}</p>
             <ul className="space-y-3 text-sm text-muted-foreground">
               <li className="flex items-center gap-2">
                 <CheckCircle2 className="h-4 w-4 text-emerald-400" />
-                Snapshot compare + undo for every column
+                {t("productivity_live_moment_point_snapshots")}
               </li>
               <li className="flex items-center gap-2">
                 <CheckCircle2 className="h-4 w-4 text-emerald-400" />
-                Priority heat map surfaces blockers early
+                {t("productivity_live_moment_point_heatmap")}
               </li>
               <li className="flex items-center gap-2">
                 <CheckCircle2 className="h-4 w-4 text-emerald-400" />
-                Native Supabase auth + realtime presence
+                {t("productivity_live_moment_point_presence")}
               </li>
             </ul>
             <Card className="border-dashed border-border/40 bg-background/80">
               <CardContent className="flex flex-col gap-3 p-4">
                 <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                  <ShieldCheck className="h-4 w-4 text-accent" /> Guardrails
+                  <ShieldCheck className="h-4 w-4 text-accent" /> {t("productivity_guardrails_title")}
                 </div>
                 <ul className="space-y-2 text-sm text-muted-foreground">
                   {trustSignals.map((signal) => (
@@ -346,14 +213,11 @@ export default function ProductivityLandingPage() {
               <div className="flex items-center gap-3">
                 <BarChart3 className="h-10 w-10 text-accent" />
                 <div>
-                  <p className="text-xs uppercase tracking-[0.3em] text-muted-foreground">Insights</p>
-                  <h3 className="text-xl font-semibold text-white">Know what is trending before standup</h3>
+                  <p className="text-xs uppercase tracking-[0.3em] text-muted-foreground">{t("productivity_insights_label")}</p>
+                  <h3 className="text-xl font-semibold text-white">{t("productivity_insights_heading")}</h3>
                 </div>
               </div>
-              <p className="text-sm text-muted-foreground">
-                Intelligent due date grouping and focus filters expose overdue blockers directly from the landing page so
-                leadership can course-correct early.
-              </p>
+              <p className="text-sm text-muted-foreground">{t("productivity_insights_body")}</p>
             </CardContent>
           </Card>
 
@@ -362,16 +226,13 @@ export default function ProductivityLandingPage() {
               <div className="flex items-center gap-3">
                 <CheckCircle2 className="h-10 w-10 text-accent" />
                 <div>
-                  <p className="text-xs uppercase tracking-[0.3em] text-muted-foreground">Workflow sync</p>
-                  <h3 className="text-xl font-semibold text-white">Invite anyone, keep permissions tight</h3>
+                  <p className="text-xs uppercase tracking-[0.3em] text-muted-foreground">{t("productivity_sync_label")}</p>
+                  <h3 className="text-xl font-semibold text-white">{t("productivity_sync_heading")}</h3>
                 </div>
               </div>
-              <p className="text-sm text-muted-foreground">
-                Share this landing view with vendors or clients using temporary tokens. Full edit access only unlocks
-                once they step inside the authenticated workspace.
-              </p>
+              <p className="text-sm text-muted-foreground">{t("productivity_sync_body")}</p>
               <Button asChild variant="outline" className="self-start">
-                <Link href="/productivity/workspace">Preview authenticated view</Link>
+                <Link href="/productivity/workspace">{t("productivity_sync_cta")}</Link>
               </Button>
             </CardContent>
           </Card>
@@ -395,11 +256,9 @@ export default function ProductivityLandingPage() {
         </section>
 
         <section className="rounded-3xl border border-border/50 bg-gradient-to-br from-border/40 via-background to-background p-8 text-center">
-          <p className="text-xs uppercase tracking-[0.4em] text-muted-foreground">Upgrade flow</p>
-          <h2 className="mt-4 text-3xl font-semibold text-white">Make this landing the new front door to your workspace</h2>
-          <p className="mt-3 text-base text-muted-foreground">
-            Showcase the experience, then open the door to the exact same kanban + calendar engine that powers SpheresConnect.
-          </p>
+          <p className="text-xs uppercase tracking-[0.4em] text-muted-foreground">{t("productivity_upgrade_label")}</p>
+          <h2 className="mt-4 text-3xl font-semibold text-white">{t("productivity_upgrade_heading")}</h2>
+          <p className="mt-3 text-base text-muted-foreground">{t("productivity_upgrade_body")}</p>
           <div className="mt-6 flex flex-col items-center justify-center gap-3 sm:flex-row">
             <Button asChild size="lg" className="gap-2">
               <Link href={primaryCtaHref}>
@@ -408,7 +267,7 @@ export default function ProductivityLandingPage() {
               </Link>
             </Button>
             <Button asChild size="lg" variant="outline">
-              <Link href="/productivity/workspace">Jump straight in</Link>
+              <Link href="/productivity/workspace">{t("productivity_secondary_cta_workspace")}</Link>
             </Button>
           </div>
         </section>
@@ -418,18 +277,21 @@ export default function ProductivityLandingPage() {
 }
 
 const BoardPreview = ({ columns }: { columns: ColumnPreview[] }) => {
+  const { t } = useI18n();
   return (
     <div className="relative rounded-3xl border border-border/60 bg-card/70 p-6 shadow-[0_30px_120px_rgba(0,0,0,0.55)]">
       <div className="mb-4 flex items-center justify-between text-xs uppercase tracking-[0.4em] text-muted-foreground">
-        <span>Live board preview</span>
-        <span>Realtime</span>
+        <span>{t("productivity_board_preview_title")}</span>
+        <span>{t("productivity_board_preview_status")}</span>
       </div>
       <div className="grid gap-4 md:grid-cols-3">
         {columns.map((column) => (
           <div key={column.title} className="rounded-2xl border border-border/40 bg-background/60 p-4">
             <div className="flex items-center justify-between">
               <p className={cn("text-sm font-semibold text-white", column.accent)}>{column.title}</p>
-              <span className="text-xs text-muted-foreground">{column.tasks.length} cards</span>
+              <span className="text-xs text-muted-foreground">
+                {t("productivity_board_card_count", { count: column.tasks.length })}
+              </span>
             </div>
             <div className="mt-4 space-y-3">
               {column.tasks.map((task) => (
@@ -454,3 +316,210 @@ const BoardPreview = ({ columns }: { columns: ColumnPreview[] }) => {
     </div>
   );
 };
+
+const buildHeroViews = (t: TranslateFn): Record<HeroViewKey, { kicker: string; title: string; description: string; cta: string }> => ({
+  sprint: {
+    kicker: t("productivity_hero_sprint_kicker"),
+    title: t("productivity_hero_sprint_title"),
+    description: t("productivity_hero_sprint_description"),
+    cta: t("productivity_hero_sprint_cta")
+  },
+  campaign: {
+    kicker: t("productivity_hero_campaign_kicker"),
+    title: t("productivity_hero_campaign_title"),
+    description: t("productivity_hero_campaign_description"),
+    cta: t("productivity_hero_campaign_cta")
+  }
+});
+
+const buildBoardColumns = (t: TranslateFn): Record<HeroViewKey, ColumnPreview[]> => ({
+  sprint: [
+    {
+      title: t("productivity_board_sprint_briefing_title"),
+      accent: "text-accent",
+      tasks: [
+        {
+          title: t("productivity_task_launch_narrative_title"),
+          badge: t("productivity_badge_copy"),
+          assignee: "Noah",
+          due: t("productivity_due_today")
+        },
+        {
+          title: t("productivity_task_moodboard_title"),
+          badge: t("productivity_badge_design"),
+          assignee: "Mika",
+          due: t("productivity_due_tomorrow")
+        }
+      ]
+    },
+    {
+      title: t("productivity_board_sprint_build_title"),
+      accent: "text-emerald-300",
+      tasks: [
+        {
+          title: t("productivity_task_prototype_title"),
+          badge: t("productivity_badge_review"),
+          assignee: "Sasha",
+          due: t("productivity_due_fri")
+        },
+        {
+          title: t("productivity_task_promo_title"),
+          badge: t("productivity_badge_3d"),
+          assignee: "Elle",
+          due: t("productivity_due_mon")
+        }
+      ]
+    },
+    {
+      title: t("productivity_board_sprint_launch_title"),
+      accent: "text-amber-300",
+      tasks: [
+        {
+          title: t("productivity_task_client_approvals_title"),
+          badge: t("productivity_badge_stakeholder"),
+          assignee: "Rae",
+          due: t("productivity_due_next_wed")
+        },
+        {
+          title: t("productivity_task_creator_payouts_title"),
+          badge: t("productivity_badge_ops"),
+          assignee: "Dev",
+          due: t("productivity_due_scheduled")
+        }
+      ]
+    }
+  ],
+  campaign: [
+    {
+      title: t("productivity_board_campaign_discovery_title"),
+      accent: "text-accent",
+      tasks: [
+        {
+          title: t("productivity_task_talent_shortlist_title"),
+          badge: t("productivity_badge_hiring"),
+          assignee: "Jon",
+          due: t("productivity_due_today")
+        },
+        {
+          title: t("productivity_task_budget_title"),
+          badge: t("productivity_badge_finance"),
+          assignee: "Ivy",
+          due: t("productivity_due_tomorrow")
+        }
+      ]
+    },
+    {
+      title: t("productivity_board_campaign_production_title"),
+      accent: "text-emerald-300",
+      tasks: [
+        {
+          title: t("productivity_task_studio_booking_title"),
+          badge: t("productivity_badge_logistics"),
+          assignee: "Abi",
+          due: t("productivity_due_fri")
+        },
+        {
+          title: t("productivity_task_shot_sequencing_title"),
+          badge: t("productivity_badge_creative"),
+          assignee: "Zee",
+          due: t("productivity_due_sun")
+        }
+      ]
+    },
+    {
+      title: t("productivity_board_campaign_delivery_title"),
+      accent: "text-amber-300",
+      tasks: [
+        {
+          title: t("productivity_task_client_deck_title"),
+          badge: t("productivity_badge_review"),
+          assignee: "Kai",
+          due: t("productivity_due_next_tue")
+        },
+        {
+          title: t("productivity_task_paid_placement_title"),
+          badge: t("productivity_badge_media"),
+          assignee: "June",
+          due: t("productivity_due_queued")
+        }
+      ]
+    }
+  ]
+});
+
+const buildFeatureHighlights = (
+  t: TranslateFn
+): { title: string; description: string; icon: typeof Workflow }[] => [
+  {
+    title: t("productivity_feature_tile_title"),
+    description: t("productivity_feature_tile_body"),
+    icon: Workflow
+  },
+  {
+    title: t("productivity_feature_calendar_title"),
+    description: t("productivity_feature_calendar_body"),
+    icon: CalendarClock
+  },
+  {
+    title: t("productivity_feature_signal_title"),
+    description: t("productivity_feature_signal_body"),
+    icon: BellRing
+  }
+];
+
+const buildWorkflowMoments = (
+  t: TranslateFn
+): { id: WorkflowMomentId; title: string; detail: string; stats: string }[] => [
+  {
+    id: WORKFLOW_MOMENT_IDS[0],
+    title: t("productivity_flow_plan_title"),
+    detail: t("productivity_flow_plan_detail"),
+    stats: t("productivity_flow_plan_stats")
+  },
+  {
+    id: WORKFLOW_MOMENT_IDS[1],
+    title: t("productivity_flow_execute_title"),
+    detail: t("productivity_flow_execute_detail"),
+    stats: t("productivity_flow_execute_stats")
+  },
+  {
+    id: WORKFLOW_MOMENT_IDS[2],
+    title: t("productivity_flow_review_title"),
+    detail: t("productivity_flow_review_detail"),
+    stats: t("productivity_flow_review_stats")
+  }
+];
+
+const buildAutomationHighlights = (
+  t: TranslateFn
+): { title: string; copy: string; icon: typeof Workflow }[] => [
+  {
+    title: t("productivity_automation_presence_title"),
+    copy: t("productivity_automation_presence_body"),
+    icon: LayoutDashboard
+  },
+  {
+    title: t("productivity_automation_latency_title"),
+    copy: t("productivity_automation_latency_body"),
+    icon: AlarmClock
+  },
+  {
+    title: t("productivity_automation_roster_title"),
+    copy: t("productivity_automation_roster_body"),
+    icon: UserRound
+  }
+];
+
+const buildShippingMetrics = (
+  t: TranslateFn
+): { label: string; value: string; delta: string }[] => [
+  { label: t("productivity_metric_kickoff_label"), value: "2.4d", delta: t("productivity_metric_kickoff_delta") },
+  { label: t("productivity_metric_predictability_label"), value: "94%", delta: t("productivity_metric_predictability_delta") },
+  { label: t("productivity_metric_approvals_label"), value: "148", delta: t("productivity_metric_approvals_delta") }
+];
+
+const buildTrustSignals = (t: TranslateFn) => [
+  t("productivity_guardrail_soc2"),
+  t("productivity_guardrail_storage"),
+  t("productivity_guardrail_links")
+];
