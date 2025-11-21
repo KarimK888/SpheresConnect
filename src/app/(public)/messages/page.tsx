@@ -9,9 +9,14 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
+import {
+  buildLandingHeroCopy,
+  buildLandingPreviewCopy,
+  translateCollection
+} from "@/lib/landing-copy";
+import type { TranslationKey } from "@/lib/landing-copy";
 
 type TranslateFn = ReturnType<typeof useI18n>["t"];
-type TranslationKey = Parameters<TranslateFn>[0];
 
 type FeatureConfig = {
   icon: typeof MessageSquare;
@@ -228,7 +233,7 @@ const ChatPreview = ({
         <span>{copy.threadHeader}</span>
         <span>{copy.threadStatus}</span>
       </div>
-      <div className="space-y-4">
+      <div className="space-y-4" role="log" aria-live="polite" aria-relevant="additions text">
         {messages.map((message) => (
           <Card key={message.id} className="border border-border/40 bg-background/80">
             <CardContent className="space-y-1 p-4">
@@ -241,7 +246,7 @@ const ChatPreview = ({
           </Card>
         ))}
         {typing && (
-          <Card className="border border-border/30 bg-border/10">
+          <Card className="border border-border/30 bg-border/10" aria-live="polite">
             <CardContent className="flex items-center gap-2 p-4 text-sm text-muted-foreground">
               <Sparkles className="h-4 w-4 text-accent" /> {copy.typingLabel}
             </CardContent>
@@ -253,28 +258,18 @@ const ChatPreview = ({
 };
 
 const buildMessagesCopy = (t: TranslateFn): MessagesCopy => {
-  const features = featureBase.map((feature) => ({
-    icon: feature.icon,
-    title: t(feature.titleKey),
-    copy: t(feature.copyKey)
-  }));
-  const compliance = complianceBase.map((item) => ({
-    title: t(item.titleKey),
-    detail: t(item.detailKey)
-  }));
+  const hero = buildLandingHeroCopy(t, "messages");
+  const preview = buildLandingPreviewCopy(t, "messages");
+  const features = translateCollection(featureBase, { title: "titleKey", copy: "copyKey" }, t);
+  const compliance = translateCollection(complianceBase, { title: "titleKey", detail: "detailKey" }, t);
   const chatScript = chatScriptBase.map((entry) => ({
     ...entry,
     text: t(entry.textKey)
   }));
 
   return {
-    heroTag: t("messages_landing_tag"),
-    heroBadge: t("messages_landing_badge"),
-    heroTitle: t("messages_landing_title"),
-    heroDescription: t("messages_landing_description"),
-    primaryCtaAuthed: t("messages_primary_cta_authed"),
-    primaryCtaGuest: t("messages_primary_cta_guest"),
-    secondaryCta: t("messages_secondary_cta"),
+    ...hero,
+    ...preview,
     features,
     compliance,
     signalBadge: t("messages_signal_badge"),
@@ -289,10 +284,6 @@ const buildMessagesCopy = (t: TranslateFn): MessagesCopy => {
     statResponse: t("messages_stat_response"),
     statQueue: t("messages_stat_queue"),
     statNote: t("messages_stat_note"),
-    previewBadge: t("messages_preview_badge"),
-    previewHeading: t("messages_preview_heading"),
-    previewBody: t("messages_preview_body"),
-    previewSecondary: t("messages_preview_secondary"),
     typingLabel: t("messages_typing_label"),
     threadHeader: t("messages_thread_header"),
     threadStatus: t("messages_thread_status"),

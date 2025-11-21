@@ -93,8 +93,8 @@ export const RewardsGate = () => {
   }
 
   return (
-    <div className="mx-auto w-full max-w-4xl px-6 py-10">
-      <RewardsClient summary={payload} />
+    <div className="mx-auto w-full max-w-5xl px-4 py-10 sm:px-6">
+      <RewardsClient summary={payload} userId={sessionUser.userId} onRefresh={() => setReloadToken((token) => token + 1)} />
     </div>
   );
 };

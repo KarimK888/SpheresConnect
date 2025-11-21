@@ -9,6 +9,13 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
+import {
+  buildLandingHeroCopy,
+  buildLandingPreviewCopy,
+  translateCollection,
+  translateKeyList
+} from "@/lib/landing-copy";
+import type { TranslationKey } from "@/lib/landing-copy";
 
 const carouselCreators = ["Neo Atelier", "Studio Prism", "PolyChroma", "Sundial", "Amber Lane", "Constellation"];
 
@@ -18,9 +25,9 @@ type DropConfig = {
   id: string;
   price: string;
   color: string;
-  titleKey: string;
-  subtitleKey: string;
-  perkKeys: [string, string, string];
+  titleKey: TranslationKey;
+  subtitleKey: TranslationKey;
+  perkKeys: readonly TranslationKey[];
 };
 
 const dropConfig: DropConfig[] = [
@@ -54,13 +61,21 @@ const logisticsBase = [
   { icon: ShoppingBag, titleKey: "marketplace_logistics_checkout_title", copyKey: "marketplace_logistics_checkout_copy" },
   { icon: CreditCard, titleKey: "marketplace_logistics_split_title", copyKey: "marketplace_logistics_split_copy" },
   { icon: Boxes, titleKey: "marketplace_logistics_inventory_title", copyKey: "marketplace_logistics_inventory_copy" }
-];
+] as const satisfies ReadonlyArray<{
+  icon: typeof ShoppingBag;
+  titleKey: TranslationKey;
+  copyKey: TranslationKey;
+}>;
 
 const proofBase = [
   { labelKey: "marketplace_proof_gmv", value: "$8.2M", detailKey: "marketplace_proof_gmv_detail" },
   { labelKey: "marketplace_proof_checkout", value: "58s", detailKey: "marketplace_proof_checkout_detail" },
   { labelKey: "marketplace_proof_revenue", value: "72%", detailKey: "marketplace_proof_revenue_detail" }
-];
+] as const satisfies ReadonlyArray<{
+  labelKey: TranslationKey;
+  value: string;
+  detailKey: TranslationKey;
+}>;
 
 type MarketplaceCopy = {
   heroTag: string;
@@ -93,36 +108,22 @@ type MarketplaceCopy = {
 };
 
 const buildMarketplaceCopy = (t: TranslateFn): MarketplaceCopy => {
-  const drops = dropConfig.map((drop) => ({
-    id: drop.id,
-    title: t(drop.titleKey),
-    subtitle: t(drop.subtitleKey),
-    price: drop.price,
-    perks: drop.perkKeys.map((key) => t(key)),
-    color: drop.color
-  }));
+  const hero = buildLandingHeroCopy(t, "marketplace");
+  const preview = buildLandingPreviewCopy(t, "marketplace");
+  const drops = translateCollection(dropConfig, { title: "titleKey", subtitle: "subtitleKey" }, t).map(
+    ({ perkKeys, ...rest }) => ({
+      ...rest,
+      perks: translateKeyList(perkKeys, t)
+    })
+  );
 
-  const logistics = logisticsBase.map((item) => ({
-    icon: item.icon,
-    title: t(item.titleKey),
-    copy: t(item.copyKey)
-  }));
+  const logistics = translateCollection(logisticsBase, { title: "titleKey", copy: "copyKey" }, t);
 
-  const proof = proofBase.map((entry) => ({
-    label: t(entry.labelKey),
-    value: entry.value,
-    detail: t(entry.detailKey)
-  }));
+  const proof = translateCollection(proofBase, { label: "labelKey", detail: "detailKey" }, t);
 
   return {
-    heroTag: t("marketplace_landing_tag"),
-    heroBadge: t("marketplace_landing_badge"),
-    heroTitle: t("marketplace_landing_title"),
-    heroDescription: t("marketplace_landing_description"),
+    ...hero,
     drops,
-    primaryCtaAuthed: t("marketplace_primary_cta_authed"),
-    primaryCtaGuest: t("marketplace_primary_cta_guest"),
-    secondaryCta: t("marketplace_secondary_cta"),
     logistics,
     proof,
     merchBadge: t("marketplace_merch_badge"),
@@ -135,10 +136,7 @@ const buildMarketplaceCopy = (t: TranslateFn): MarketplaceCopy => {
     ],
     marqueeTitle: t("marketplace_marquee_title"),
     marqueeBody: t("marketplace_marquee_body"),
-    previewBadge: t("marketplace_preview_badge"),
-    previewHeading: t("marketplace_preview_heading"),
-    previewBody: t("marketplace_preview_body"),
-    previewSecondary: t("marketplace_preview_secondary")
+    ...preview
   };
 };
 
@@ -194,6 +192,7 @@ export default function MarketplaceLandingPage() {
                     tab.id === activeDrop ? "bg-background/80 text-white" : "hover:text-white"
                   )}
                   onClick={() => setActiveDrop(tab.id)}
+                  aria-pressed={tab.id === activeDrop}
                 >
                   {tab.title}
                 </button>

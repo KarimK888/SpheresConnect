@@ -832,8 +832,8 @@ const getChatLink = useCallback(() => {
 
   return (
     <>
-    <div className="mx-auto flex h-[calc(100vh-160px)] w-full max-w-6xl gap-4 px-6 py-8">
-      <aside className="flex w-72 flex-shrink-0 flex-col gap-4 rounded-2xl border border-border/60 bg-card/70 p-4">
+    <div className="mx-auto flex w-full max-w-6xl flex-col gap-4 px-4 py-6 lg:h-[calc(100vh-160px)] lg:flex-row lg:px-6 lg:py-8">
+      <aside className="flex w-full flex-col gap-4 rounded-2xl border border-border/60 bg-card/70 p-4 lg:w-72 lg:flex-shrink-0">
         <div className="flex items-center justify-between">
           <h2 className="text-xs uppercase tracking-[0.3em] text-muted-foreground">{t("messages_threads")}</h2>
           <Button

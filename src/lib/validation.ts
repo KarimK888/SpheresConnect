@@ -130,8 +130,9 @@ export const EventUpdateSchema = z.object({
 
 export const RewardLogSchema = z.object({
   userId: z.string(),
-  action: z.enum(["onboarding", "checkin", "match", "sale", "rsvp"]),
-  points: z.number().min(0),
+  action: z.enum(["onboarding", "checkin", "match", "sale", "rsvp", "bonus", "redeem", "transfer"]),
+  points: z.number(),
+  note: z.string().max(200).optional(),
   createdAt: z.number().optional()
 });
 

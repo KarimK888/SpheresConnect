@@ -9,6 +9,12 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
+import {
+  buildLandingHeroCopy,
+  buildLandingPreviewCopy,
+  translateCollection
+} from "@/lib/landing-copy";
+import type { TranslationKey } from "@/lib/landing-copy";
 
 type ProfilesCopy = {
   heroTag: string;
@@ -42,7 +48,6 @@ type ProfilesCopy = {
 };
 
 type TranslateFn = ReturnType<typeof useI18n>["t"];
-type TranslationKey = Parameters<TranslateFn>[0];
 
 const industryIds = ["visuals", "sound", "collectors", "ops"] as const;
 
@@ -154,6 +159,7 @@ export default function ProfilesLandingPage() {
                     activeIndustry === industry.id ? "bg-background/80 text-white" : "hover:text-white"
                   )}
                   onClick={() => setActiveIndustry(industry.id)}
+                  aria-pressed={activeIndustry === industry.id}
                 >
                   {industry.label}
                 </button>
@@ -283,6 +289,8 @@ const ProfilesPreview = ({
             hub === option ? "bg-background/80 text-white" : "hover:text-white"
           )}
           onClick={() => onHubChange(option)}
+          aria-pressed={hub === option}
+          aria-label={copy.previewHeader ? `${copy.previewHeader}: ${option}` : option}
         >
           {option}
         </button>
@@ -324,32 +332,21 @@ const buildProfilesCopy = (t: TranslateFn): ProfilesCopy => {
     value: metric.value,
     caption: t("profiles_metric_caption")
   }));
-  const proofPoints = proofBase.map((item) => ({
-    icon: item.icon,
-    title: t(item.titleKey as TranslationKey),
-    copy: t(item.bodyKey as TranslationKey)
-  }));
-  const confidence = confidenceBullets.map((bullet) => ({ icon: bullet.icon, text: t(bullet.textKey as TranslationKey) }));
+  const proofPoints = translateCollection(proofBase, { title: "titleKey", copy: "bodyKey" }, t);
+  const confidence = translateCollection(confidenceBullets, { text: "textKey" }, t);
   const cards = spotlightBase.map((profile) => ({
     ...profile,
     craft: t(`profiles_spotlight_${profile.id}_craft` as const)
   }));
+  const hero = buildLandingHeroCopy(t, "profiles");
+  const preview = buildLandingPreviewCopy(t, "profiles");
 
   return {
-    heroTag: t("profiles_landing_tag"),
-    heroBadge: t("profiles_landing_badge"),
-    heroTitle: t("profiles_landing_title"),
-    heroDescription: t("profiles_landing_description"),
+    ...hero,
     filters,
     metrics,
     proofPoints,
-    primaryCtaAuthed: t("profiles_primary_cta_authed"),
-    primaryCtaGuest: t("profiles_primary_cta_guest"),
-    secondaryCta: t("profiles_secondary_cta"),
-    previewBadge: t("profiles_preview_badge"),
-    previewHeading: t("profiles_preview_heading"),
-    previewBody: t("profiles_preview_body"),
-    previewSecondary: t("profiles_preview_secondary"),
+    ...preview,
     confidenceBadge: t("profiles_confidence_badge"),
     confidenceHeading: t("profiles_confidence_heading"),
     confidenceBody: t("profiles_confidence_body"),

@@ -9,6 +9,12 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
+import {
+  buildLandingHeroCopy,
+  buildLandingPreviewCopy,
+  translateCollection
+} from "@/lib/landing-copy";
+import type { TranslationKey } from "@/lib/landing-copy";
 
 type TranslateFn = ReturnType<typeof useI18n>["t"];
 
@@ -66,6 +72,21 @@ const candidateBase = [
 ] as const;
 
 const vibeFilters = ["creative", "technical", "ops"] as const;
+const matcherStatsBase: { labelKey: TranslationKey; detailKey: TranslationKey; value: string }[] = [
+  { labelKey: "matcher_stat_match_rate_label", detailKey: "matcher_stat_match_rate_detail", value: "87%" },
+  { labelKey: "matcher_stat_reply_label", detailKey: "matcher_stat_reply_detail", value: "12m" },
+  { labelKey: "matcher_stat_bridges_label", detailKey: "matcher_stat_bridges_detail", value: "421" }
+];
+const matcherBenefitsBase: { titleKey: TranslationKey; copyKey: TranslationKey; Icon: typeof Users }[] = [
+  { titleKey: "matcher_benefit_cohorts_title", copyKey: "matcher_benefit_cohorts_copy", Icon: Users },
+  { titleKey: "matcher_benefit_intros_title", copyKey: "matcher_benefit_intros_copy", Icon: MessageCircle },
+  { titleKey: "matcher_benefit_refresh_title", copyKey: "matcher_benefit_refresh_copy", Icon: Zap }
+];
+const conversionBulletBase: { Icon: typeof Heart; textKey: TranslationKey }[] = [
+  { Icon: Heart, textKey: "matcher_conversion_sentiment" },
+  { Icon: MapPin, textKey: "matcher_conversion_hubs" },
+  { Icon: Star, textKey: "matcher_conversion_priority" }
+];
 
 
 export default function MatcherLandingPage() {
@@ -129,6 +150,7 @@ export default function MatcherLandingPage() {
                     setActiveFilter(filter.id);
                     setActiveIndex(0);
                   }}
+                  aria-pressed={activeFilter === filter.id}
                 >
                   {filter.label}
                 </button>
@@ -297,22 +319,12 @@ const CandidateStack = ({
 };
 
 const buildMatcherCopy = (t: TranslateFn): MatcherCopy => {
+  const hero = buildLandingHeroCopy(t, "matcher");
+  const preview = buildLandingPreviewCopy(t, "matcher");
   const filters = vibeFilters.map((id) => ({ id, label: t(`matcher_filter_${id}` as const) }));
-  const stats = [
-    { label: t("matcher_stat_match_rate_label"), value: "87%", detail: t("matcher_stat_match_rate_detail") },
-    { label: t("matcher_stat_reply_label"), value: "12m", detail: t("matcher_stat_reply_detail") },
-    { label: t("matcher_stat_bridges_label"), value: "421", detail: t("matcher_stat_bridges_detail") }
-  ];
-  const benefits = [
-    { title: t("matcher_benefit_cohorts_title"), copy: t("matcher_benefit_cohorts_copy"), Icon: Users },
-    { title: t("matcher_benefit_intros_title"), copy: t("matcher_benefit_intros_copy"), Icon: MessageCircle },
-    { title: t("matcher_benefit_refresh_title"), copy: t("matcher_benefit_refresh_copy"), Icon: Zap }
-  ];
-  const conversionBullets = [
-    { Icon: Heart, text: t("matcher_conversion_sentiment") },
-    { Icon: MapPin, text: t("matcher_conversion_hubs") },
-    { Icon: Star, text: t("matcher_conversion_priority") }
-  ];
+  const stats = translateCollection(matcherStatsBase, { label: "labelKey", detail: "detailKey" }, t);
+  const benefits = translateCollection(matcherBenefitsBase, { title: "titleKey", copy: "copyKey" }, t);
+  const conversionBullets = translateCollection(conversionBulletBase, { text: "textKey" }, t);
   const candidateStories = candidateBase.map((story) => ({
     ...story,
     role: t(`matcher_story_${story.id}_role` as const),
@@ -320,10 +332,7 @@ const buildMatcherCopy = (t: TranslateFn): MatcherCopy => {
   }));
 
   return {
-    heroTag: t("matcher_landing_tag"),
-    heroBadge: t("matcher_landing_badge"),
-    heroTitle: t("matcher_landing_title"),
-    heroDescription: t("matcher_landing_description"),
+    ...hero,
     filters,
     candidateStories,
     stats,
@@ -332,13 +341,7 @@ const buildMatcherCopy = (t: TranslateFn): MatcherCopy => {
     conversionHeading: t("matcher_conversion_heading"),
     conversionBody: t("matcher_conversion_body"),
     conversionBullets,
-    primaryCtaAuthed: t("matcher_primary_cta_authed"),
-    primaryCtaGuest: t("matcher_primary_cta_guest"),
-    secondaryCta: t("matcher_secondary_cta"),
-    previewBadge: t("matcher_preview_badge"),
-    previewHeading: t("matcher_preview_heading"),
-    previewBody: t("matcher_preview_body"),
-    previewSecondary: t("matcher_preview_secondary"),
+    ...preview,
     spotlightLabel: t("matcher_spotlight_label"),
     stackFallback: t("matcher_stack_fallback")
   };

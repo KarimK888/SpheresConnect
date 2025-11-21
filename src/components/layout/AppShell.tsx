@@ -184,6 +184,9 @@ export const AppShell = ({ children }: { children: React.ReactNode }) => {
             <Link href="/admin" className="hover:text-white">
               {t("footer_admin")}
             </Link>
+            <Link href="/policies" className="hover:text-white">
+              {t("footer_policy")}
+            </Link>
             <Link href="/signup" className="hover:text-white">
               {t("footer_join")}
             </Link>

@@ -3357,6 +3357,7 @@ export const createSupabaseBackend = (): BackendAdapter => {
               userId: row.user_id,
               action: (row.action as RewardLog["action"]) ?? "checkin",
               points: row.points ?? 0,
+              note: row.note ?? undefined,
               createdAt: row.created_at ? new Date(row.created_at).getTime() : Date.now()
             })) ?? [];
           fallbackRewards = [
@@ -3389,6 +3390,7 @@ export const createSupabaseBackend = (): BackendAdapter => {
             user_id: entry.userId,
             action: entry.action,
             points: entry.points,
+            note: entry.note ?? null,
             created_at: new Date(entry.createdAt).toISOString()
           });
           if (error) throw error;

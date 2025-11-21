@@ -177,9 +177,10 @@ export interface Event {
 export interface RewardLog {
   id: string;
   userId: string;
-  action: "onboarding" | "checkin" | "match" | "sale" | "rsvp";
+  action: "onboarding" | "checkin" | "match" | "sale" | "rsvp" | "bonus" | "redeem" | "transfer";
   points: number;
   createdAt: number;
+  note?: string;
 }
 
 export interface MatchAction {
