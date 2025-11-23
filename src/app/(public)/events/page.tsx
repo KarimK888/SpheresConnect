@@ -43,6 +43,7 @@ export default function EventsLandingPage() {
   const logistics = useMemo(() => buildEventLogistics(t), [t]);
   const [activeStage, setActiveStage] = useState(stages[0]?.id ?? "ideate");
 
+  const plannerAnchor = sessionUser ? "/events/workspace?view=planner" : "/signup?next=/events/workspace?view=planner";
   const primaryCtaHref = sessionUser ? "/events/workspace" : "/signup";
   const primaryCtaLabel = sessionUser ? t("events_cta_primary_authed") : t("events_cta_primary_guest");
 
@@ -87,7 +88,7 @@ export default function EventsLandingPage() {
                 </Link>
               </Button>
               <Button asChild size="lg" variant="outline">
-                <Link href="/events/workspace">{t("events_cta_secondary")}</Link>
+                <Link href={plannerAnchor}>{t("events_cta_secondary")}</Link>
               </Button>
             </div>
           </div>
@@ -159,7 +160,7 @@ export default function EventsLandingPage() {
               </Link>
             </Button>
             <Button asChild size="lg" variant="outline">
-              <Link href="/events/workspace">{t("events_cta_secondary")}</Link>
+              <Link href={plannerAnchor}>{t("events_cta_secondary")}</Link>
             </Button>
           </div>
         </section>

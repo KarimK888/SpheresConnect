@@ -1,8 +1,10 @@
 import { createClient, type SupabaseClient, type RealtimeChannel } from "@supabase/supabase-js";
+import type { PostgrestError } from "@supabase/postgrest-js";
 import type { BackendAdapter, AuthSession, CreateEventInput } from "./backend";
 import type { Database, ChatAttachmentPayload } from "./supabase-database";
 import { sendHubPresenceEmail, sendOrderReceiptEmail } from "./mail";
 import { sendTransactionalSms } from "./sms";
+import { applyRsvpAction } from "./events";
 import type {
   Chat,
   Hub,
@@ -837,20 +839,56 @@ const mapOrderRow = (row: Database["public"]["Tables"]["orders"]["Row"]): Order 
   status: row.status,
   stripePaymentIntentId: row.stripe_payment_intent_id ?? undefined,
   createdAt: new Date(row.created_at).getTime(),
-  metadata: row.metadata ?? undefined
+  metadata: (row.metadata as Order["metadata"]) ?? undefined
 });
 
-const mapEventRow = (row: Database["public"]["Tables"]["events"]["Row"]): Event => ({
-  eventId: row.event_id,
-  title: row.title,
-  description: row.description ?? undefined,
-  startsAt: new Date(row.starts_at).getTime(),
-  endsAt: row.ends_at ? new Date(row.ends_at).getTime() : undefined,
-  location: row.location ?? undefined,
-  hostUserId: row.host_user_id,
-  attendees: row.attendees ?? [],
-  createdAt: new Date(row.created_at).getTime()
-});
+const shippingStatusLabels: Record<string, string> = {
+  processing: "Processing order",
+  preparing: "Preparing shipment",
+  in_transit: "In transit",
+  delivered: "Delivered",
+  refunded: "Refunded"
+};
+
+let supportsEventPending = true;
+const eventPendingFallback: Record<string, string[]> = {};
+
+const ensurePendingCache = (eventId: string, pending: string[]) => {
+  eventPendingFallback[eventId] = pending ?? [];
+};
+
+const mapEventRow = (row: Database["public"]["Tables"]["events"]["Row"]): Event => {
+  const pendingFromRow = (row as { pending_attendees?: string[] }).pending_attendees ?? [];
+  const pending = supportsEventPending ? pendingFromRow : eventPendingFallback[row.event_id] ?? [];
+  if (supportsEventPending) {
+    ensurePendingCache(row.event_id, pending);
+  } else {
+    ensurePendingCache(row.event_id, pending);
+  }
+  return {
+    eventId: row.event_id,
+    title: row.title,
+    description: row.description ?? undefined,
+    startsAt: new Date(row.starts_at).getTime(),
+    endsAt: row.ends_at ? new Date(row.ends_at).getTime() : undefined,
+    location: row.location ?? undefined,
+    hostUserId: row.host_user_id,
+    attendees: row.attendees ?? [],
+    pendingAttendees: pending,
+    createdAt: new Date(row.created_at).getTime()
+  };
+};
+
+const isPendingColumnError = (error?: PostgrestError | null) =>
+  Boolean(error && (error.code === "42703" || error.message?.includes("pending_attendees")));
+
+const stripPendingFromPayload = (
+  payload: Database["public"]["Tables"]["events"]["Insert"] | Database["public"]["Tables"]["events"]["Update"]
+) => {
+  const clone = { ...(payload as Record<string, unknown>) };
+  delete clone.pending_attendees;
+  return clone;
+};
 
 const EARTH_RADIUS_KM = 6371;
 const toRadians = (value: number) => (value * Math.PI) / 180;
@@ -1300,9 +1338,9 @@ export const createSupabaseBackend = (): BackendAdapter => {
     }
   };
 
-  const fetchArtworkSummary = async (artworkId: string) => {
-    const fallback = sampleArtworks.find((entry) => entry.artworkId === artworkId) ?? null;
-    if (!clients) return fallback;
+const fetchArtworkSummary = async (artworkId: string) => {
+  const fallback = sampleArtworks.find((entry) => entry.artworkId === artworkId) ?? null;
+  if (!clients) return fallback;
     try {
       const { data, error } = await admin
         .from("artworks")
@@ -1319,6 +1357,39 @@ export const createSupabaseBackend = (): BackendAdapter => {
     } catch (error) {
       console.warn("[supabase] fetchArtworkSummary fallback:", error instanceof Error ? error.message : error);
       return fallback;
+    }
+  };
+
+  const notifyOrderIntent = async (order: Order) => {
+    try {
+      const [buyerSummary, sellerSummary, artworkSummary] = await Promise.all([
+        fetchUserSummary(order.buyerId),
+        fetchUserSummary(order.sellerId),
+        fetchArtworkSummary(order.artworkId)
+      ]);
+      const artworkTitle = artworkSummary?.title ?? "your listing";
+      const buyerName = buyerSummary?.displayName ?? buyerSummary?.email ?? order.buyerId;
+      const sellerName = sellerSummary?.displayName ?? sellerSummary?.email ?? order.sellerId;
+      await Promise.all([
+        createNotificationEntry({
+          userId: order.sellerId,
+          kind: "marketplace",
+          title: `Checkout started: ${artworkTitle}`,
+          body: `${buyerName} initiated payment. Track progress in your orders workspace.`,
+          link: `/marketplace/orders/${order.orderId}`,
+          metadata: { orderId: order.orderId, artworkId: order.artworkId }
+        }),
+        createNotificationEntry({
+          userId: order.buyerId,
+          kind: "marketplace",
+          title: `Checkout ready for ${artworkTitle}`,
+          body: `Next step: confirm payment and coordinate with ${sellerName}.`,
+          link: `/marketplace/orders/${order.orderId}`,
+          metadata: { orderId: order.orderId, artworkId: order.artworkId }
+        })
+      ]);
+    } catch (error) {
+      console.warn("[supabase] order checkout notification failed:", error instanceof Error ? error.message : error);
     }
   };
 
@@ -1439,6 +1510,37 @@ export const createSupabaseBackend = (): BackendAdapter => {
       logout: async () => {
         await anon.auth.signOut();
         currentSession = null;
+      },
+      requestPasswordReset: async ({ email, redirectTo }) => {
+        const targetRedirect =
+          redirectTo && redirectTo.trim().length > 0 ? redirectTo : buildAbsoluteUrl("/reset-password");
+        const { error } = await anon.auth.resetPasswordForEmail(email, { redirectTo: targetRedirect });
+        if (error) {
+          throw error;
+        }
+      },
+      resetPassword: async ({ password }) => {
+        const { data, error } = await anon.auth.getSession();
+        if (error) {
+          throw error;
+        }
+        const session = data.session;
+        if (!session?.user) {
+          throw new Error("Reset link is invalid or has expired.");
+        }
+        const result = await anon.auth.updateUser({ password });
+        if (result.error || !result.data.user) {
+          throw result.error ?? new Error("Unable to reset password");
+        }
+        const { data: row } = await admin.from("users").select("*").eq("user_id", result.data.user.id).single();
+        if (!row) {
+          currentSession = null;
+          return null;
+        }
+        const user = mapUserRow(row);
+        const nextToken = result.data.session?.access_token ?? session.access_token ?? "";
+        currentSession = { token: nextToken, user };
+        return user;
       }
     },
     profilePortfolio: {
@@ -2861,6 +2963,7 @@ export const createSupabaseBackend = (): BackendAdapter => {
           }
           const mapped = mapOrderRow(data);
           fallbackOrders = [mapped, ...fallbackOrders.filter((order) => order.orderId !== mapped.orderId)];
+          await notifyOrderIntent(mapped);
           return { clientSecret: `pi_secret_${orderId}`, order: mapped };
         } catch (error) {
           console.warn("[supabase] orders.createPaymentIntent falling back:", error);
@@ -2881,6 +2984,7 @@ export const createSupabaseBackend = (): BackendAdapter => {
             metadata
           };
           fallbackOrders = [order, ...fallbackOrders];
+          await notifyOrderIntent(order);
           return { clientSecret: `pi_secret_${orderId}`, order };
         }
       },
@@ -2932,7 +3036,7 @@ export const createSupabaseBackend = (): BackendAdapter => {
               await Promise.all([
                 createNotificationEntry({
                   userId: mapped.sellerId,
-                  kind: "order",
+                  kind: "marketplace",
                   title: `New order from ${buyerName}`,
                   body: `${buyerName} purchased "${artworkTitle}". Review the order details.`,
                   link: `/marketplace/orders/${mapped.orderId}`,
@@ -2940,7 +3044,7 @@ export const createSupabaseBackend = (): BackendAdapter => {
                 }),
                 createNotificationEntry({
                   userId: mapped.buyerId,
-                  kind: "order",
+                  kind: "marketplace",
                   title: `Order confirmed: ${artworkTitle}`,
                   body: `Thanks for collecting from ${sellerName}. We'll follow up with tracking info soon.`,
                   link: `/marketplace/orders/${mapped.orderId}`,
@@ -3051,7 +3155,7 @@ export const createSupabaseBackend = (): BackendAdapter => {
               await Promise.all([
                 createNotificationEntry({
                   userId: updated.sellerId,
-                  kind: "order",
+                  kind: "marketplace",
                   title: `New order from ${buyerName}`,
                   body: `${buyerName} purchased "${artworkTitle}". Review the order details.`,
                   link: `/marketplace/orders/${updated.orderId}`,
@@ -3059,7 +3163,7 @@ export const createSupabaseBackend = (): BackendAdapter => {
                 }),
                 createNotificationEntry({
                   userId: updated.buyerId,
-                  kind: "order",
+                  kind: "marketplace",
                   title: `Order confirmed: ${artworkTitle}`,
                   body: `Thanks for collecting from ${sellerName}. We'll follow up with tracking info soon.`,
                   link: `/marketplace/orders/${updated.orderId}`,
@@ -3175,6 +3279,65 @@ export const createSupabaseBackend = (): BackendAdapter => {
             })
             .sort((a, b) => b.createdAt - a.createdAt);
         }
+      },
+      updateMetadata: async ({ orderId, metadata }) => {
+        try {
+          const { data, error } = await admin
+            .from("orders")
+            .update({ metadata: metadata ?? null })
+            .eq("order_id", orderId)
+            .select("*")
+            .single();
+          if (error || !data) {
+            throw error ?? new Error("Unable to update order metadata");
+          }
+          const mapped = mapOrderRow(data);
+          fallbackOrders = mergeById(fallbackOrders, [mapped], (item) => item.orderId);
+          if (clients) {
+            const [buyerSummary, artworkSummary] = await Promise.all([
+              fetchUserSummary(mapped.buyerId),
+              fetchArtworkSummary(mapped.artworkId)
+            ]);
+            const artworkTitle = artworkSummary?.title ?? "your order";
+            const buyerName = buyerSummary?.displayName ?? buyerSummary?.email ?? mapped.buyerId;
+            const statusLabel = mapped.metadata?.shippingStatus
+              ? shippingStatusLabels[mapped.metadata.shippingStatus] ?? "Updated"
+              : "Updated";
+            const detailNote = mapped.metadata?.trackingNumber
+              ? `Tracking: ${mapped.metadata.trackingNumber}`
+              : mapped.metadata?.downloadUrl
+                ? `Download: ${mapped.metadata.downloadUrl}`
+                : undefined;
+            await Promise.all([
+              createNotificationEntry({
+                userId: mapped.buyerId,
+                kind: "marketplace",
+                title: `${artworkTitle} • ${statusLabel}`,
+                body: detailNote ?? "The seller updated fulfillment details.",
+                link: `/marketplace/orders/${mapped.orderId}`,
+                metadata: { orderId: mapped.orderId, artworkId: mapped.artworkId }
+              }),
+              createNotificationEntry({
+                userId: mapped.sellerId,
+                kind: "marketplace",
+                title: `Shared update with ${buyerName}`,
+                body: detailNote ?? "The buyer will see the latest fulfillment changes.",
+                link: `/marketplace/orders/${mapped.orderId}`,
+                metadata: { orderId: mapped.orderId, artworkId: mapped.artworkId }
+              })
+            ]);
+          }
+          return mapped;
+        } catch (error) {
+          console.warn("[supabase] orders.updateMetadata falling back:", error instanceof Error ? error.message : error);
+          const current = fallbackOrders.find((order) => order.orderId === orderId);
+          if (!current) {
+            throw error ?? new Error("Order not found");
+          }
+          const updated: Order = { ...current, metadata };
+          fallbackOrders = mergeById(fallbackOrders, [updated], (item) => item.orderId);
+          return updated;
+        }
       }
     },
     events: {
@@ -3200,9 +3363,22 @@ export const createSupabaseBackend = (): BackendAdapter => {
           location: input.location ?? null,
           host_user_id: input.hostUserId,
           attendees: input.attendees ?? [],
+          pending_attendees: input.pendingAttendees ?? [],
           created_at: new Date(input.createdAt ?? Date.now()).toISOString()
         };
-        const { data, error } = await admin.from("events").insert(payload).select("*").single();
+        const executeInsert = () =>
+          admin.from("events").insert(supportsEventPending ? payload : (stripPendingFromPayload(payload) as typeof payload)).select("*").single();
+        let { data, error } = await executeInsert();
+        if (error || !data) {
+          if (supportsEventPending && isPendingColumnError(error)) {
+            supportsEventPending = false;
+            console.warn(
+              "[supabase] events.pending_attendees missing. Apply migration 017_add_event_pending_attendees.sql to enable approvals."
+            );
+            ensurePendingCache(payload.event_id ?? generateId(), input.pendingAttendees ?? []);
+            ({ data, error } = await executeInsert());
+          }
+        }
         if (error || !data) {
           console.warn("[supabase] events.create falling back:", error?.message ?? "Unknown error");
           const fallback: Event = {
@@ -3214,6 +3390,7 @@ export const createSupabaseBackend = (): BackendAdapter => {
             location: payload.location ?? undefined,
             hostUserId: payload.host_user_id,
             attendees: payload.attendees ?? [],
+            pendingAttendees: supportsEventPending ? payload.pending_attendees ?? [] : eventPendingFallback[payload.event_id ?? ""] ?? [],
             createdAt: payload.created_at ? new Date(payload.created_at).getTime() : Date.now()
           };
           fallbackEvents = [...fallbackEvents.filter((event) => event.eventId !== fallback.eventId), fallback];
@@ -3243,15 +3420,31 @@ export const createSupabaseBackend = (): BackendAdapter => {
         if (Object.prototype.hasOwnProperty.call(data, "attendees")) {
           updates.attendees = data.attendees ?? [];
         }
+        if (Object.prototype.hasOwnProperty.call(data, "pendingAttendees")) {
+          updates.pending_attendees = data.pendingAttendees ?? [];
+        }
         if (Object.prototype.hasOwnProperty.call(data, "hostUserId") && data.hostUserId) {
           updates.host_user_id = data.hostUserId;
         }
-        const { data: updatedRow, error } = await admin
-          .from("events")
-          .update(updates)
-          .eq("event_id", eventId)
-          .select("*")
-          .single();
+        const executeUpdate = () =>
+          admin
+            .from("events")
+            .update(
+              supportsEventPending ? updates : (stripPendingFromPayload(updates) as typeof updates)
+            )
+            .eq("event_id", eventId)
+            .select("*")
+            .single();
+        let { data: updatedRow, error } = await executeUpdate();
+        if (error || !updatedRow) {
+          if (supportsEventPending && isPendingColumnError(error)) {
+            supportsEventPending = false;
+            if (Object.prototype.hasOwnProperty.call(data, "pendingAttendees")) {
+              ensurePendingCache(eventId, data.pendingAttendees ?? []);
+            }
+            ({ data: updatedRow, error } = await executeUpdate());
+          }
+        }
         if (error || !updatedRow) {
           console.warn("[supabase] events.update falling back:", error?.message ?? "Unknown error");
           const fallback = fallbackEvents.find((event) => event.eventId === eventId);
@@ -3281,6 +3474,9 @@ export const createSupabaseBackend = (): BackendAdapter => {
             ...(Object.prototype.hasOwnProperty.call(data, "attendees")
               ? { attendees: data.attendees ?? [] }
               : {}),
+            ...(Object.prototype.hasOwnProperty.call(data, "pendingAttendees")
+              ? { pendingAttendees: data.pendingAttendees ?? [] }
+              : {}),
             ...(Object.prototype.hasOwnProperty.call(data, "hostUserId")
               ? { hostUserId: data.hostUserId ?? fallback.hostUserId }
               : {})
@@ -3289,6 +3485,9 @@ export const createSupabaseBackend = (): BackendAdapter => {
           return updatedFallback;
         }
         const updated = mapEventRow(updatedRow);
+        if (!supportsEventPending && Object.prototype.hasOwnProperty.call(data, "pendingAttendees")) {
+          ensurePendingCache(eventId, data.pendingAttendees ?? []);
+        }
         fallbackEvents = fallbackEvents.map((event) => (event.eventId === updated.eventId ? updated : event));
         return updated;
       },
@@ -3299,7 +3498,7 @@ export const createSupabaseBackend = (): BackendAdapter => {
         }
         fallbackEvents = fallbackEvents.filter((event) => event.eventId !== eventId);
       },
-      rsvp: async ({ eventId, userId }) => {
+      rsvp: async ({ eventId, userId, action, targetUserId }) => {
         const { data: row, error } = await admin
           .from("events")
           .select("*")
@@ -3311,24 +3510,47 @@ export const createSupabaseBackend = (): BackendAdapter => {
           if (!fallback) {
             throw error ?? new Error("Event not found");
           }
-          const attendees = new Set(fallback.attendees);
-          attendees.add(userId);
-          const updated = { ...fallback, attendees: Array.from(attendees) };
-          fallbackEvents = fallbackEvents.map((event) => (event.eventId === eventId ? updated : event));
-          return updated;
+          const updatedFallback = applyRsvpAction(fallback, { requesterId: userId, action, targetUserId });
+          fallbackEvents = fallbackEvents.map((event) => (event.eventId === eventId ? updatedFallback : event));
+          return updatedFallback;
         }
-        const attendees = new Set(row.attendees ?? []);
-        attendees.add(userId);
-        const { data: updatedRow, error: updateError } = await admin
-          .from("events")
-          .update({ attendees: Array.from(attendees) })
-          .eq("event_id", eventId)
-          .select("*")
-          .single();
+        const baseEvent = mapEventRow(row);
+        const nextEvent = applyRsvpAction(baseEvent, { requesterId: userId, action, targetUserId });
+        const updatePayload = {
+          attendees: nextEvent.attendees,
+          pending_attendees: nextEvent.pendingAttendees
+        };
+        const executeUpdate = () =>
+          admin
+            .from("events")
+            .update(
+              supportsEventPending ? updatePayload : (stripPendingFromPayload(updatePayload) as typeof updatePayload)
+            )
+            .eq("event_id", eventId)
+            .select("*")
+            .single();
+        let { data: updatedRow, error: updateError } = await executeUpdate();
         if (updateError || !updatedRow) {
-          throw updateError ?? new Error("Unable to update RSVP");
+          if (supportsEventPending && isPendingColumnError(updateError)) {
+            supportsEventPending = false;
+            ensurePendingCache(eventId, nextEvent.pendingAttendees);
+            ({ data: updatedRow, error: updateError } = await executeUpdate());
+          }
+        }
+        if (updateError || !updatedRow) {
+          console.warn("[supabase] events.rsvp update failed, using fallback:", updateError?.message ?? "unknown error");
+          const fallback = fallbackEvents.find((event) => event.eventId === eventId);
+          if (!fallback) {
+            throw updateError ?? new Error("Unable to update RSVP");
+          }
+          const updatedFallback = applyRsvpAction(fallback, { requesterId: userId, action, targetUserId });
+          fallbackEvents = fallbackEvents.map((event) => (event.eventId === eventId ? updatedFallback : event));
+          return updatedFallback;
         }
         const updated = mapEventRow(updatedRow);
+        if (!supportsEventPending) {
+          ensurePendingCache(eventId, nextEvent.pendingAttendees);
+        }
         fallbackEvents = fallbackEvents.map((event) => (event.eventId === updated.eventId ? updated : event));
         return updated;
       }

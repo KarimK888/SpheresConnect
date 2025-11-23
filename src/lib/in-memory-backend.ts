@@ -1,4 +1,5 @@
 import type { BackendAdapter, AuthSession, CreateEventInput } from "./backend";
+import { applyRsvpAction } from "./events";
 import {
   sampleUsers,
   sampleArtworks,
@@ -428,6 +429,19 @@ export const createInMemoryBackend = (provider: "firebase" | "supabase"): Backen
       getSession: async () => store.session,
       logout: async () => {
         store.session = null;
+      },
+      requestPasswordReset: async ({ email }) => {
+        const user = store.users.find((u) => u.email === email);
+        if (!user) {
+          throw new Error("Account not found");
+        }
+        console.info(`[auth] Password reset requested for ${email} (demo backend)`);
+      },
+      resetPassword: async () => {
+        if (!store.session) {
+          throw new Error("No active password reset session");
+        }
+        return store.session.user;
       }
     },
     productivity: {
@@ -1147,6 +1161,15 @@ export const createInMemoryBackend = (provider: "firebase" | "supabase"): Backen
             return order.buyerId === userId || order.sellerId === userId;
           })
           .sort((a, b) => b.createdAt - a.createdAt);
+      },
+      updateMetadata: async ({ orderId, metadata }) => {
+        const existing = store.orders.find((order) => order.orderId === orderId);
+        if (!existing) {
+          throw new Error("Order not found");
+        }
+        const updated: Order = { ...existing, metadata };
+        store.orders = store.orders.map((order) => (order.orderId === orderId ? updated : order));
+        return updated;
       }
     },
     events: {
@@ -1161,6 +1184,7 @@ export const createInMemoryBackend = (provider: "firebase" | "supabase"): Backen
           location: input.location,
           hostUserId: input.hostUserId,
           attendees: input.attendees ?? [],
+          pendingAttendees: input.pendingAttendees ?? [],
           createdAt: input.createdAt ?? Date.now()
         };
         store.events.push(event);
@@ -1179,7 +1203,8 @@ export const createInMemoryBackend = (provider: "firebase" | "supabase"): Backen
           endsAt: data.endsAt !== undefined ? data.endsAt ?? undefined : existing.endsAt,
           location: data.location !== undefined ? (data.location ?? undefined) : existing.location,
           hostUserId: data.hostUserId ?? existing.hostUserId,
-          attendees: data.attendees ?? existing.attendees
+          attendees: data.attendees ?? existing.attendees,
+          pendingAttendees: data.pendingAttendees ?? existing.pendingAttendees ?? []
         };
         store.events = store.events.map((event) => (event.eventId === eventId ? updated : event));
         return updated;
@@ -1187,15 +1212,16 @@ export const createInMemoryBackend = (provider: "firebase" | "supabase"): Backen
       remove: async ({ eventId }) => {
         store.events = store.events.filter((event) => event.eventId !== eventId);
       },
-      rsvp: async ({ eventId, userId }) => {
+      rsvp: async ({ eventId, userId, action, targetUserId }) => {
         const event = store.events.find((evt) => evt.eventId === eventId);
         if (!event) {
           throw new Error("Event not found");
         }
         ensureUser(store, userId);
-        const attendees = new Set(event.attendees);
-        attendees.add(userId);
-        const updated = { ...event, attendees: Array.from(attendees) };
+        if (targetUserId) {
+          ensureUser(store, targetUserId);
+        }
+        const updated = applyRsvpAction(event, { requesterId: userId, action, targetUserId });
         store.events = store.events.map((evt) => (evt.eventId === eventId ? updated : evt));
         return updated;
       }

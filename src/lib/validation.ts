@@ -89,43 +89,49 @@ export const OrderSchema = z.object({
     .optional()
 });
 
+const locationSchema = z
+  .object({
+    lat: z.number().optional(),
+    lng: z.number().optional(),
+    address: z.string().optional()
+  })
+  .strict()
+  .optional();
+
 export const EventSchema = z.object({
   eventId: z.string().optional(),
   title: z.string().min(3),
   description: z.string().max(2000).optional(),
   startsAt: z.number().positive(),
   endsAt: z.number().positive().optional(),
-  location: z
-    .object({
-      lat: z.number(),
-      lng: z.number(),
-      address: z.string().optional()
-    })
-    .optional(),
+  location: locationSchema,
   hostUserId: z.string(),
   attendees: z.array(z.string()).optional(),
+  pendingAttendees: z.array(z.string()).optional(),
   createdAt: z.number().optional()
 });
 
-export const RSVPEventSchema = z.object({
-  userId: z.string()
-});
+export const RSVPEventSchema = z
+  .object({
+    userId: z.string(),
+    action: z.enum(["request", "cancel", "approve", "reject"]).optional(),
+    targetUserId: z.string().optional()
+  })
+  .refine(
+    (value) =>
+      !value.action || value.action === "request" || value.action === "cancel" || Boolean(value.targetUserId),
+    { message: "targetUserId required for approvals", path: ["targetUserId"] }
+  );
 
 export const EventUpdateSchema = z.object({
   title: z.string().min(3).optional(),
   description: z.string().max(2000).nullable().optional(),
   startsAt: z.number().positive().optional(),
   endsAt: z.number().positive().nullable().optional(),
-  location: z
-    .object({
-      lat: z.number(),
-      lng: z.number(),
-      address: z.string().optional()
-    })
-    .nullable()
-    .optional(),
+  location: locationSchema,
   hostUserId: z.string().optional(),
-  attendees: z.array(z.string()).optional()
+  attendees: z.array(z.string()).optional(),
+  pendingAttendees: z.array(z.string()).optional()
 });
 
 export const RewardLogSchema = z.object({

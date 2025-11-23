@@ -6,6 +6,8 @@ import { useSessionState } from "./session";
 import { getBackend } from "@/lib/backend";
 import type { Hub, MessageEvent, NotificationEntry } from "@/lib/types";
 import { useI18n } from "./i18n";
+import { getSupabaseBrowserClient } from "@/lib/supabase-browser";
+import type { Database } from "@/lib/supabase-database";
 
 const makeId = () => {
   if (typeof crypto !== "undefined" && crypto.randomUUID) {
@@ -319,6 +321,41 @@ export const NotificationsProvider = ({ children }: { children: React.ReactNode 
     return () => {
       cancelled = true;
       window.clearInterval(id);
+    };
+  }, [user]);
+
+  useEffect(() => {
+    if (!user) return;
+    const client = getSupabaseBrowserClient();
+    if (!client) return;
+    const channel = client
+      .channel(`notifications-stream:${user.userId}`)
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "notifications", filter: `user_id=eq.${user.userId}` },
+        (payload) => {
+          const row = payload.new as Database["public"]["Tables"]["notifications"]["Row"] | null;
+          if (!row) return;
+          const entry: NotificationEntry = {
+            notificationId: row.notification_id,
+            userId: row.user_id,
+            kind: row.kind ?? "system",
+            title: row.title,
+            body: row.body ?? undefined,
+            link: row.link ?? undefined,
+            linkLabel: row.link_label ?? undefined,
+            secondaryLink: row.secondary_link ?? undefined,
+            secondaryLinkLabel: row.secondary_link_label ?? undefined,
+            metadata: row.metadata ?? undefined,
+            createdAt: new Date(row.created_at).getTime(),
+            readAt: row.read_at ? new Date(row.read_at).getTime() : undefined
+          };
+          useNotificationStore.getState().add(mapEntryToNotification(entry));
+        }
+      )
+      .subscribe();
+    return () => {
+      void channel.unsubscribe();
     };
   }, [user]);
 

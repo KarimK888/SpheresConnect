@@ -501,7 +501,16 @@ export const sampleOrders: Order[] = [
     currency: "usd",
     status: "paid",
     stripePaymentIntentId: "pi_sample_123",
-    createdAt: now - 1000 * 60 * 60 * 48
+    createdAt: now - 1000 * 60 * 60 * 48,
+    metadata: {
+      shippingStatus: "in_transit",
+      trackingNumber: "TRACK-123456",
+      downloadUrl: "https://cdn.spheraconnect.dev/resources/sample-pack.zip",
+      note: "Packed with archival tissue paper.",
+      progressPercent: 65,
+      lastUpdatedAt: now - 1000 * 60 * 60 * 6,
+      lastUpdatedBy: "usr_alina"
+    }
   }
 ];
 
@@ -515,6 +524,7 @@ export const sampleEvents: Event[] = [
     location: { lat: 43.6532, lng: -79.3832, address: "Toronto Sound Lab" },
     hostUserId: "usr_cyrus",
     attendees: ["usr_alina", "usr_cyrus"],
+    pendingAttendees: [],
     createdAt: now - 1000 * 60 * 60 * 24 * 3
   },
   {
@@ -525,6 +535,7 @@ export const sampleEvents: Event[] = [
     location: { lat: 48.8566, lng: 2.3522, address: "Paris Atelier 19" },
     hostUserId: "usr_bastien",
     attendees: ["usr_admin"],
+    pendingAttendees: [],
     createdAt: now - 1000 * 60 * 60 * 24 * 4
   },
   {
@@ -535,6 +546,7 @@ export const sampleEvents: Event[] = [
     location: { lat: 45.5017, lng: -73.5673, address: "Montreal Creative Loft" },
     hostUserId: "usr_alina",
     attendees: ["usr_admin", "usr_elio"],
+    pendingAttendees: [],
     createdAt: now - 1000 * 60 * 60 * 24 * 10
   }
 ];

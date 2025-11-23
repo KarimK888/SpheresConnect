@@ -27,10 +27,16 @@ export async function GET() {
     return acc;
   }, {});
 
+  const normalizedEvents = events.map((event) => ({
+    ...event,
+    pendingAttendees: event.pendingAttendees ?? []
+  }));
+
   const uniqueUserIds = new Set<string>();
-  events.forEach((event) => {
+  normalizedEvents.forEach((event) => {
     uniqueUserIds.add(event.hostUserId);
     event.attendees.forEach((attendee) => uniqueUserIds.add(attendee));
+    (event.pendingAttendees ?? []).forEach((attendee) => uniqueUserIds.add(attendee));
   });
   hubs.forEach((hub) => hub.activeUsers.forEach((userId) => uniqueUserIds.add(userId)));
   checkins.forEach((entry) => uniqueUserIds.add(entry.userId));
@@ -47,7 +53,7 @@ export async function GET() {
   );
 
   return NextResponse.json({
-    items: events,
+    items: normalizedEvents,
     directory,
     hubs: hubDirectory,
     presence: presenceByHub
@@ -66,6 +72,7 @@ export async function POST(request: Request) {
     location: payload.location,
     hostUserId: payload.hostUserId,
     attendees: payload.attendees,
+    pendingAttendees: payload.pendingAttendees ?? [],
     createdAt: payload.createdAt ?? Date.now()
   });
   return NextResponse.json(event, { status: 201 });
@@ -79,7 +86,42 @@ export async function PATCH(request: Request) {
     return NextResponse.json({ error: { code: "VALIDATION_ERROR", message: "Missing eventId" } }, { status: 400 });
   }
   const payload = RSVPEventSchema.parse(await request.json());
-  const event = await backend.events.rsvp({ eventId, userId: payload.userId });
+  const action = payload.action ?? "request";
+  const event = await backend.events.rsvp({ eventId, userId: payload.userId, action, targetUserId: payload.targetUserId });
+  try {
+    if (action === "request" && event.hostUserId !== payload.userId) {
+      const [hostProfile, requester] = await Promise.all([
+        backend.users.get(event.hostUserId),
+        backend.users.get(payload.userId)
+      ]);
+      if (hostProfile) {
+        await backend.notifications.create({
+          userId: event.hostUserId,
+          kind: "event.rsvp.request",
+          title: "New RSVP request",
+          body: `${requester?.displayName ?? payload.userId} wants to attend ${event.title}.`,
+          link: "/events/workspace",
+          metadata: { eventId }
+        });
+      }
+    } else if ((action === "approve" || action === "reject") && payload.targetUserId) {
+      const title = action === "approve" ? "RSVP approved" : "RSVP rejected";
+      const body =
+        action === "approve"
+          ? `You're confirmed for ${event.title}.`
+          : `Your request to attend ${event.title} was declined.`;
+      await backend.notifications.create({
+        userId: payload.targetUserId,
+        kind: `event.rsvp.${action}`,
+        title,
+        body,
+        link: "/events/workspace",
+        metadata: { eventId }
+      });
+    }
+  } catch (error) {
+    console.warn("[events] unable to fan-out RSVP notification", error);
+  }
   return NextResponse.json(event);
 }
 

@@ -149,6 +149,24 @@ export interface Chat {
   hiddenBy: string[];
 }
 
+export type OrderShippingStatus = "processing" | "preparing" | "in_transit" | "delivered" | "refunded";
+
+export interface OrderMetadataAttachment {
+  label: string;
+  url: string;
+}
+
+export interface OrderMetadata {
+  shippingStatus?: OrderShippingStatus;
+  trackingNumber?: string;
+  downloadUrl?: string;
+  attachments?: OrderMetadataAttachment[];
+  note?: string;
+  progressPercent?: number;
+  lastUpdatedAt?: number;
+  lastUpdatedBy?: string;
+}
+
 export interface Order {
   orderId: string;
   artworkId: string;
@@ -159,7 +177,7 @@ export interface Order {
   status: "pending" | "paid" | "failed" | "refunded";
   stripePaymentIntentId?: string;
   createdAt: number;
-  metadata?: Record<string, unknown>;
+  metadata?: OrderMetadata;
 }
 
 export interface Event {
@@ -168,9 +186,10 @@ export interface Event {
   description?: string;
   startsAt: number;
   endsAt?: number;
-  location?: { lat: number; lng: number; address?: string };
+  location?: { lat?: number; lng?: number; address?: string };
   hostUserId: string;
   attendees: string[];
+  pendingAttendees: string[];
   createdAt: number;
 }
 

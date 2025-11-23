@@ -454,9 +454,10 @@ export type Database = {
           description: string | null;
           starts_at: string;
           ends_at: string | null;
-          location: { lat: number; lng: number; address?: string } | null;
+          location: { lat?: number; lng?: number; address?: string } | null;
           host_user_id: string;
           attendees: string[] | null;
+          pending_attendees: string[] | null;
           created_at: string;
         };
         Insert: {
@@ -465,9 +466,10 @@ export type Database = {
           description?: string | null;
           starts_at: string;
           ends_at?: string | null;
-          location?: { lat: number; lng: number; address?: string } | null;
+          location?: { lat?: number; lng?: number; address?: string } | null;
           host_user_id: string;
           attendees?: string[] | null;
+          pending_attendees?: string[] | null;
           created_at?: string;
         };
         Update: {
@@ -475,9 +477,10 @@ export type Database = {
           description?: string | null;
           starts_at?: string;
           ends_at?: string | null;
-          location?: { lat: number; lng: number; address?: string } | null;
+          location?: { lat?: number; lng?: number; address?: string } | null;
           host_user_id?: string;
           attendees?: string[] | null;
+          pending_attendees?: string[] | null;
           created_at?: string;
         };
       };

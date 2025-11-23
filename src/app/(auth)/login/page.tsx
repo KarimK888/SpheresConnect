@@ -111,6 +111,11 @@ export default function LoginPage() {
                 {...register("password")}
               />
               {errors.password && <p className="text-xs text-accent">{errors.password.message}</p>}
+              <div className="text-right text-xs">
+                <Link href="/forgot-password" className="text-primary hover:underline">
+                  {t("auth_login_forgot_link")}
+                </Link>
+              </div>
             </div>
             {error && <p className="text-xs text-accent">{error}</p>}
             <Button type="submit" className="w-full" disabled={loading}>

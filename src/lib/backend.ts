@@ -51,6 +51,8 @@ export interface BackendAuth {
   oauth: (input: { provider: "google" | "apple" | "linkedin"; token: string }) => Promise<AuthSession>;
   getSession: () => Promise<AuthSession | null>;
   logout: () => Promise<void>;
+  requestPasswordReset: (input: { email: string; redirectTo?: string }) => Promise<void>;
+  resetPassword: (input: { password: string }) => Promise<User | null>;
 }
 
 export interface BackendUsers {
@@ -127,6 +129,7 @@ export interface BackendOrders {
   confirmPayment: (input: { paymentIntentId: string; status: Order["status"] }) => Promise<Order>;
   get: (orderId: string) => Promise<Order | null>;
   listForUser: (input: { userId: string; role?: "buyer" | "seller" | "all" }) => Promise<Order[]>;
+  updateMetadata: (input: { orderId: string; metadata: Order["metadata"] }) => Promise<Order>;
 }
 
 export type CreateEventInput = {
@@ -138,15 +141,18 @@ export type CreateEventInput = {
   location?: Event["location"];
   hostUserId: string;
   attendees?: string[];
+  pendingAttendees?: string[];
   createdAt?: number;
 };
+
+export type EventRsvpAction = "request" | "cancel" | "approve" | "reject";
 
 export interface BackendEvents {
   list: () => Promise<Event[]>;
   create: (input: CreateEventInput) => Promise<Event>;
   update: (input: { eventId: string; data: Partial<Omit<CreateEventInput, "eventId" | "hostUserId">> & { hostUserId?: string } }) => Promise<Event>;
   remove: (input: { eventId: string }) => Promise<void>;
-  rsvp: (input: { eventId: string; userId: string }) => Promise<Event>;
+  rsvp: (input: { eventId: string; userId: string; action?: EventRsvpAction; targetUserId?: string }) => Promise<Event>;
 }
 
 export interface BackendRewards {
