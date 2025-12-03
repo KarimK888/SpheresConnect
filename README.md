@@ -11,14 +11,27 @@ SpheraConnect is a hybrid ecosystem where artists and buyers connect, collaborat
 - **AI Flows**: Genkit-style stubs for smart matching, translation, auto-tagging, voice-to-text
 - **Payments**: Stripe helpers plus webhook endpoint
 - **Maps**: Mapbox GL JS
+- **Auth & Security**: Supabase Auth + OAuth/OIDC, roles, optional gateway middleware
+
+## Monorepo Layout
+
+```
+apps/
+  web/         # Next.js app
+  storybook/   # Storybook playground for shared UI
+packages/
+  ui/          # shared component library
+  config/      # eslint/tailwind presets
+  types/       # shared TypeScript contracts
+```
 
 ## Getting Started
 
 ```bash
-npm install
-cp .env.example .env.local
+pnpm install
+cp apps/web/.env.example apps/web/.env.local
 # fill in your keys
-npm run dev
+pnpm dev --filter=web
 ```
 
 By default the app uses the in-memory backend. Set `NEXT_PUBLIC_BACKEND=supabase` to run against Supabase using the schema provided in `supabase/migrations`.
@@ -35,6 +48,7 @@ See `.env.example` for the complete list. At minimum configure:
 - `STRIPE_SECRET_KEY` and `STRIPE_WEBHOOK_SECRET` - Stripe test keys
 - `PROFILE_INVITE_SECRET` / `PROFILE_INVITE_TTL_MS` - signing secret + TTL for profile-invite tokens
 - `RESEND_API_KEY` / `PROFILE_INVITE_FROM` - optional email delivery via Resend (logs to console if unset)
+- `API_GATEWAY_SECRET` - optional shared secret required on mutating `/api` requests (header `x-spheraconnect-gateway`)
 
 Add the Firebase keys (`FIREBASE_*`) only if you plan to wire that provider.
 
@@ -42,14 +56,15 @@ Add the Firebase keys (`FIREBASE_*`) only if you plan to wire that provider.
 
 | Command | Description |
 | --- | --- |
-| `npm run dev` | Start Next.js dev server |
-| `npm run build` | Production build |
-| `npm run start` | Start production server |
-| `npm run lint` | ESLint across the repo |
-| `npm run typecheck` | TypeScript project check |
-| `npm run test` | Vitest placeholder suite |
-| `npm run seed` | Prints sample data counts (hook into your DB of choice) |
-| `npm run export:supabase` | Emits SQL insert statements from `sample-data.ts` for Supabase seeding |
+| `pnpm dev --filter=web` | Start Next.js dev server |
+| `pnpm build --filter=web` | Production build |
+| `pnpm start --filter=web` | Start production server |
+| `pnpm lint --filter=web` | ESLint across the repo |
+| `pnpm typecheck --filter=web` | TypeScript project check |
+| `pnpm test --filter=web` | Vitest placeholder suite |
+| `pnpm seed --filter=web` | Prints sample data counts (hook into your DB of choice) |
+| `pnpm export:supabase --filter=web` | Emits SQL insert statements from `sample-data.ts` for Supabase seeding |
+| `pnpm db:migrate` | Applies every SQL file in `apps/web/supabase/migrations` to your Supabase project |
 
 ## Stripe Webhook (Test Mode)
 
@@ -71,10 +86,11 @@ The in-memory backend will mark orders as paid when the webhook fires.
 - **Marketplace** – Listings, seller dashboard, Stripe payment intent creation and webhook handler
 - **Events & Rewards** – Event listings with RSVP patch, rewards summary with logs
 - **Admin Panel** – Verification queue placeholder with stats surface
+- **Offline-first & Sync** – Service worker + IndexedDB cache the hub map (hubs, check-ins, profiles, events, rewards) and a shared queue replays `/api/checkin`, `/api/rewards`, and `/api/orders*` mutations once connectivity returns.
 
 ## Data & Seeding
 
-Sample data lives in `src/lib/sample-data.ts` (users, artworks, hubs, check-ins, events, rewards, chats, match actions). Run `npm run seed` to print counts or adapt the script to push into Firebase/Supabase.
+Sample data lives in `apps/web/src/lib/sample-data.ts` (users, artworks, hubs, check-ins, events, rewards, chats, match actions). Run `pnpm seed --filter=web` to print counts or adapt the script to push into Firebase/Supabase.
 
 To bootstrap Supabase quickly, run:
 
@@ -84,6 +100,21 @@ psql "$DATABASE_URL" -f supabase-seed.sql
 ```
 
 The generated SQL upserts into `users`, `hubs`, `artworks`, `events`, `checkins`, `rewards`, and `match_actions`. Tweak the script if you only want specific tables.
+
+Keep your schema current with the bundled migrations:
+
+```bash
+pnpm db:migrate      # runs supabase migration up inside apps/web
+```
+
+Each run picks up the next file under `apps/web/supabase/migrations`, so version-control any local edits before applying them to staging/production.
+
+### Offline-first architecture
+
+- `packages/offline` exposes a shared IndexedDB helper used by the web app (and reusable for native clients). It keeps mirrored object stores for `checkins`, `events`, `hubs`, `profiles`, `rewards`, plus a lightweight mutation queue.
+- A service worker (`apps/web/public/sw.js`) caches the Next.js shell and API GET calls so hub map + workspace pages open instantly when returning to the app.
+- `useCheckin`, the hub map gate, rewards UI, and marketplace checkout now hydrate from the cache, enqueue mutations when the browser is offline, and listen for the sync hook (`useOfflineSync`) to refresh data after replay.
+- `/api/checkin`, `/api/rewards`, `/api/orders`, and `/api/orders/confirm` requests are added to the queue automatically when offline so users can continue working. The hook flushes them when the browser regains connectivity and emits a client event to refresh live queries.
 
 ## Deploying
 
@@ -134,8 +165,9 @@ create policy "match_actions_insert_self"
 
 Grant your service role full access so the `/api/match/actions` route can issue writes server-side. After applying the migrations, seed Supabase (or load your real data) and run through signup → invite → create profile → hub map → matcher to verify likes, notifications, and messaging end-to-end.
 
-## Testing
+## Testing & Release
 
+- Automated commands and manual QA flows live in [`docs/testing.md`](./docs/testing.md).
 - Unit/integration stubs: Vitest config ready – extend with schema tests and API route checks.
 - E2E: Add Playwright to cover onboarding → match → message → marketplace → rewards once APIs are wired.
 - Accessibility: Use `@axe-core/playwright` or similar for WCAG 2.2 AA benchmarking.
@@ -146,3 +178,7 @@ Grant your service role full access so the `/api/match/actions` route can issue 
 - Expand moderation/admin tooling beyond the verification queue.
 - Integrate Genkit or preferred AI provider for matching, translation, and tagging.
 - Harden security (JWT sessions, rate limiting, CSRF) once moving beyond prototype.
+- **Auth & Security**
+  - Supabase Auth with OAuth/OIDC providers (Google, Apple, GitHub)
+  - Users carry roles (member, moderator, admin) surfaced via shared RBAC helpers
+  - Sensitive API routes use `requireApiRole(...)` and the optional gateway middleware enforces `API_GATEWAY_SECRET` on write requests

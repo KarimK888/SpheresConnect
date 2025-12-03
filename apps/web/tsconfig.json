@@ -1,0 +1,19 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["src/*"],
+      "@spheresconnect/ui": ["../../packages/ui/src"],
+      "@spheresconnect/types": ["../../packages/types/src/index"],
+      "@spheresconnect/offline": ["../../packages/offline/src"]
+    },
+    "plugins": [
+      {
+        "name": "next"
+      }
+    ]
+  },
+  "include": ["next-env.d.ts", "src", "scripts", "tests", "middleware.ts", ".next/types/**/*.ts"],
+  "exclude": ["node_modules"]
+}
